@@ -696,6 +696,7 @@ class BiliDownloader(QWidget):
     def toggle_lang(self):
         self.is_cn = not self.is_cn
         # 顶部按钮
+        self.theme_btn.setText("切换主题" if self.is_cn else "Toggle Theme")  # ← 增加这一行
         self.lang_btn.setText("English" if self.is_cn else "中文")
         self.settings_btn.setText("设置" if self.is_cn else "Settings")
         self.download_manager_btn.setText("下载管理" if self.is_cn else "Manager")
@@ -709,7 +710,6 @@ class BiliDownloader(QWidget):
             self.quality_box.addItems(["自动(最高)", "仅视频", "仅音频"])
         else:
             self.quality_box.addItems(["Auto (Best)", "Video Only", "Audio Only"])
-        # 设置弹窗等其它地方的文本建议在弹窗打开时根据 self.is_cn 设置
         self.setStyleSheet(self.get_stylesheet())
 
     def show_settings_dialog(self):
