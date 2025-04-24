@@ -16,9 +16,16 @@ if not os.path.exists("download"):
 
 # 创建主窗口
 root = tk.Tk()
-root.overrideredirect(True)  # 隐藏原生标题栏
+# root.overrideredirect(True)  # 注释掉这行
 root.geometry("520x600")
 root.configure(bg="#f6f7f9")
+
+# 需要无边框时再设置
+def set_no_border():
+    root.overrideredirect(True)
+
+def unset_no_border():
+    root.overrideredirect(False)
 
 # 自定义标题栏
 def move_window(event):
@@ -60,7 +67,9 @@ title_label.pack(side="left", padx=4)
 
 # 最小化按钮
 def minimize_window():
+    unset_no_border()  # 先关闭无边框
     root.iconify()
+    root.after(200, set_no_border)  # 恢复无边框（延迟一点点更兼容）
 min_btn = tk.Button(title_bar, text="—", command=minimize_window, bg="#00a1d6", fg="white", bd=0, padx=8, pady=0, font=("微软雅黑", 12), activebackground="#0090c6", activeforeground="white")
 min_btn.pack(side="right", padx=0)
 min_btn.bind("<Enter>", lambda e: min_btn.config(bg="#0090c6"))
@@ -87,7 +96,6 @@ title_label.bind("<Button-1>", get_pos)
 title_label.bind("<B1-Motion>", move_window)
 logo_label.bind("<Button-1>", get_pos)
 logo_label.bind("<B1-Motion>", move_window)
-
 # 下载进度变量
 progress_var = tk.DoubleVar()
 
@@ -209,8 +217,8 @@ def on_bv_input_change(event=None):
     debounce_id = root.after(500, show_video_info)  # 500ms防抖
 
 # BV号输入框
-entry_bv = tk.Entry(root, font=("微软雅黑", 12), width=45, bg="#e3f1fd", fg="#222", relief="flat", highlightthickness=2, highlightbackground="#00a1d6", highlightcolor="#00a1d6")
-entry_bv.pack(pady=5, ipady=6)
+entry_bv = tk.Entry(root, font=("Comic Sans MS", 12), width=45, bg="#ffccff")
+entry_bv.pack(pady=5)
 
 # 设置监听事件，当用户输入时触发显示标题和封面图
 entry_bv.bind("<KeyRelease>", on_bv_input_change)
