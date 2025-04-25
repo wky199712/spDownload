@@ -301,21 +301,21 @@ class BiliDownloader(QWidget):
 
     def show_video_info(self):
         bv_input = self.entry_bv.text().strip()
-        if len(bv_input) < 12:
+        if len(bv_input) < 2:
             self.title_label.setText("")
             self.cover_label.clear()
             return
 
         def fetch_info():
-            info = self.get_video_info(bv_input)
-            if info:
+            infos = self.get_video_info(bv_input)
+            if infos:
+                info = infos[0]
                 self.title_label.setText(info["title"])
                 try:
                     with urlopen(info["thumbnail"]) as u:
                         raw_data = u.read()
                     image = QImage.fromData(raw_data)
                     pixmap = QPixmap.fromImage(image)
-                    # 让图片高度等于QLabel高度，宽度自适应，比例不变
                     pixmap = pixmap.scaledToHeight(self.cover_label.height(), Qt.SmoothTransformation)
                     self.cover_label.setPixmap(pixmap)
                 except Exception as e:
@@ -328,21 +328,39 @@ class BiliDownloader(QWidget):
         self.executor.submit(fetch_info)
 
     def get_video_info(self, bv_input):
-        if bv_input.startswith("https://www.bilibili.com/video/"):
-            bv_url = bv_input
-        elif bv_input.startswith("BV"):
-            bv_url = f"https://www.bilibili.com/video/{bv_input}"
-        else:
-            return None
-        try:
-            ydl_opts = {'quiet': True, 'skip_download': True}
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                info_dict = ydl.extract_info(bv_url, download=False)
-                title = info_dict.get("title", "未知标题")
-                thumbnail = info_dict.get("thumbnail", None)
-                return {"title": title, "thumbnail": thumbnail, "url": bv_url}
-        except Exception:
-            return None
+        # 支持多个BV号或URL（用空格、换行、逗号分隔）
+        inputs = re.split(r'[\s,]+', bv_input.strip())
+        all_videos = []
+        for single_input in inputs:
+            if not single_input:
+                continue
+            if single_input.startswith("https://www.bilibili.com/video/"):
+                bv_url = single_input
+            elif single_input.startswith("BV"):
+                bv_url = f"https://www.bilibili.com/video/{single_input}"
+            else:
+                continue
+            try:
+                ydl_opts = {'quiet': True, 'skip_download': True}
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    info_dict = ydl.extract_info(bv_url, download=False)
+                    # 如果是多P合集
+                    if "entries" in info_dict:
+                        for entry in info_dict["entries"]:
+                            all_videos.append({
+                                "title": entry.get("title", "未知标题"),
+                                "thumbnail": entry.get("thumbnail", None),
+                                "url": entry.get("webpage_url", bv_url)
+                            })
+                    else:
+                        all_videos.append({
+                            "title": info_dict.get("title", "未知标题"),
+                            "thumbnail": info_dict.get("thumbnail", None),
+                            "url": bv_url
+                        })
+            except Exception:
+                continue
+        return all_videos
 
     def on_click_download(self):
         self.executor.submit(self.start_download)
@@ -351,53 +369,51 @@ class BiliDownloader(QWidget):
         self._cancel_download = False
         self.signals.progress.emit(0)
         bv_input = self.entry_bv.text().strip()
-        # 检查网络
         if not is_network_available():
             self.signals.error.emit("网络不可用，请检查您的网络连接！")
             return
-        info = self.get_video_info(bv_input)
-        if not info:
+        infos = self.get_video_info(bv_input)
+        if not infos:
             self.signals.error.emit("获取视频信息失败，请检查链接或网络！")
             return
-        title = info["title"]
-        safe_title = safe_filename(title)
-        ydl_opts = {
-            'format': self.get_quality_format(),
-            'outtmpl': os.path.join(self.download_path, f'{safe_title}.%(ext)s'),
-            'merge_output_format': 'mp4',
-            'noplaylist': True,
-            'progress_hooks': [self.update_progress],
-            'quiet': True,
-        }
-        self.download_queue.append((title, "下载中" if self.is_cn else "Downloading"))
-        try:
-            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                ydl.download([info["url"]])
-            self.signals.progress.emit(100)
-            self.signals.finished.emit()
-            for i, (t, s) in enumerate(self.download_queue):
-                if t == title:
-                    self.download_queue[i] = (t, "已完成" if self.is_cn else "Finished")
-            # 下载成功
-            self.download_history.append({
-                "title": title,
-                "url": info["url"],
-                "status": "success",
-            })
-            self.save_history()
-        except Exception as e:
-            for i, (t, s) in enumerate(self.download_queue):
-                if t == title:
-                    self.download_queue[i] = (t, "失败" if self.is_cn else "Failed")
-            self.signals.error.emit(f"下载失败: {e}")
-            # 下载失败
-            self.download_history.append({
-                "title": title,
-                "url": info["url"],
-                "status": "failed",
-                "error": str(e)
-            })
-            self.save_history()
+        for info in infos:
+            title = info["title"]
+            safe_title = safe_filename(title)
+            ydl_opts = {
+                'format': self.get_quality_format(),
+                'outtmpl': os.path.join(self.download_path, f'{safe_title}.%(ext)s'),
+                'merge_output_format': 'mp4',
+                'noplaylist': True,
+                'progress_hooks': [self.update_progress],
+                'quiet': True,
+            }
+            self.download_queue.append((title, "下载中" if self.is_cn else "Downloading"))
+            try:
+                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                    ydl.download([info["url"]])
+                self.signals.progress.emit(100)
+                self.signals.finished.emit()
+                for i, (t, s) in enumerate(self.download_queue):
+                    if t == title:
+                        self.download_queue[i] = (t, "已完成" if self.is_cn else "Finished")
+                self.download_history.append({
+                    "title": title,
+                    "url": info["url"],
+                    "status": "success",
+                })
+                self.save_history()
+            except Exception as e:
+                for i, (t, s) in enumerate(self.download_queue):
+                    if t == title:
+                        self.download_queue[i] = (t, "失败" if self.is_cn else "Failed")
+                self.signals.error.emit(f"下载失败: {e}")
+                self.download_history.append({
+                    "title": title,
+                    "url": info["url"],
+                    "status": "failed",
+                    "error": str(e)
+                })
+                self.save_history()
     def update_progress(self, d):
         if self._cancel_download:
             raise Exception("用户取消下载")
