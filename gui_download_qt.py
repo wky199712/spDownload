@@ -153,29 +153,12 @@ class BiliDownloader(QWidget):
         self.executor = ThreadPoolExecutor(max_workers=4)
         # 全局美化
         self.setStyleSheet(self.get_stylesheet())
-
-        # 可选：主界面加阴影（需PyQt5自带的QGraphicsDropShadowEffect）
-        # from PyQt5.QtWidgets import QGraphicsDropShadowEffect
-        # shadow = QGraphicsDropShadowEffect(self)
-        # shadow.setBlurRadius(20)
-        # shadow.setColor(QColor(0, 0, 0, 80))
-        # shadow.setOffset(0, 4)
-        # self.setGraphicsEffect(shadow)
-
-        # 添加窗口阴影
-        # 建议先注释掉阴影试试流畅度
-        # shadow = QGraphicsDropShadowEffect(self)
-        # shadow.setBlurRadius(30)
-        # shadow.setColor(QColor(0, 0, 0, 80))
-        # shadow.setOffset(0, 8)
-        # self.setGraphicsEffect(shadow)
-
-        # 注释掉毛玻璃相关
-        # if sys.platform == "win32":
-        #     hwnd = self.winId().__int__()
-        #     enable_blur(hwnd)
-
         self.load_history()  # 加载历史记录
+        # 监控剪贴板
+        self.last_clipboard = ""
+        self.clipboard_timer = QTimer(self)
+        self.clipboard_timer.timeout.connect(self.check_clipboard)
+        self.clipboard_timer.start(1500)  # 每1.5秒检测一次
 
     def init_ui(self):
         main_layout = QVBoxLayout(self)
@@ -248,21 +231,7 @@ class BiliDownloader(QWidget):
         self.download_btn.pressed.connect(lambda: self.animate_button(self.download_btn, 0.95))
         self.download_btn.released.connect(lambda: self.animate_button(self.download_btn, 1.0))
         content.addWidget(self.download_btn)
-
-        # # 下载队列按钮
-        # self.queue_btn = QPushButton("下载队列" if self.is_cn else "Queue")
-        # self.queue_btn.setIcon(QIcon("queue.png"))
-        # self.queue_btn.setIconSize(QSize(20, 20))
-        # self.queue_btn.clicked.connect(self.show_download_queue)
-        # self.queue_btn.pressed.connect(lambda: self.animate_button(self.queue_btn, 0.95))
-        # self.queue_btn.released.connect(lambda: self.animate_button(self.queue_btn, 1.0))
-        # content.addWidget(self.queue_btn)
-        # # 历史记录按钮
-        # self.history_btn = QPushButton("历史记录" if self.is_cn else "History")
-        # self.history_btn.setIcon(QIcon("history.png"))
-        # self.history_btn.setIconSize(QSize(18, 18))
-        # self.history_btn.clicked.connect(self.show_history_dialog)
-        # content.addWidget(self.history_btn)
+        
         # 设置按钮
         self.download_manager_btn = QPushButton("下载管理" if self.is_cn else "Manager")
         self.download_manager_btn.setIcon(QIcon("folder.png"))  # 使用folder.png图标
@@ -388,32 +357,38 @@ class BiliDownloader(QWidget):
                 'quiet': True,
             }
             self.download_queue.append((title, "下载中" if self.is_cn else "Downloading"))
-            try:
-                with yt_dlp.YoutubeDL(ydl_opts) as ydl:
-                    ydl.download([info["url"]])
-                self.signals.progress.emit(100)
-                self.signals.finished.emit()
-                for i, (t, s) in enumerate(self.download_queue):
-                    if t == title:
-                        self.download_queue[i] = (t, "已完成" if self.is_cn else "Finished")
-                self.download_history.append({
-                    "title": title,
-                    "url": info["url"],
-                    "status": "success",
-                })
-                self.save_history()
-            except Exception as e:
-                for i, (t, s) in enumerate(self.download_queue):
-                    if t == title:
-                        self.download_queue[i] = (t, "失败" if self.is_cn else "Failed")
-                self.signals.error.emit(f"下载失败: {e}")
-                self.download_history.append({
-                    "title": title,
-                    "url": info["url"],
-                    "status": "failed",
-                    "error": str(e)
-                })
-                self.save_history()
+            retry = 0
+            max_retry = 3
+            while retry < max_retry:
+                try:
+                    with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                        ydl.download([info["url"]])
+                    self.signals.progress.emit(100)
+                    self.signals.finished.emit()
+                    for i, (t, s) in enumerate(self.download_queue):
+                        if t == title:
+                            self.download_queue[i] = (t, "已完成" if self.is_cn else "Finished")
+                    self.download_history.append({
+                        "title": title,
+                        "url": info["url"],
+                        "status": "success",
+                    })
+                    self.save_history()
+                    break  # 成功则退出重试循环
+                except Exception as e:
+                    retry += 1
+                    if retry >= max_retry:
+                        for i, (t, s) in enumerate(self.download_queue):
+                            if t == title:
+                                self.download_queue[i] = (t, "失败" if self.is_cn else "Failed")
+                        self.signals.error.emit(f"下载失败: {e}")
+                        self.download_history.append({
+                            "title": title,
+                            "url": info["url"],
+                            "status": "failed",
+                            "error": str(e)
+                        })
+                        self.save_history()
     def update_progress(self, d):
         if self._cancel_download:
             raise Exception("用户取消下载")
@@ -494,6 +469,25 @@ class BiliDownloader(QWidget):
 
         redownload_btn.clicked.connect(redownload)
         dialog.exec_()
+
+    def check_clipboard(self):
+        clipboard = QApplication.clipboard()
+        text = clipboard.text().strip()
+        if text and text != self.last_clipboard:
+            # 检测B站链接或BV号
+            if re.match(r"^(https?://www\.bilibili\.com/video/|BV[0-9A-Za-z]{10,})", text):
+                self.last_clipboard = text
+                reply = QMessageBox.question(
+                    self,
+                    "检测到B站链接" if self.is_cn else "Bilibili Link Detected",
+                    f"检测到剪贴板有B站链接：\n{text}\n是否一键下载？" if self.is_cn else f"Detected Bilibili link in clipboard:\n{text}\nDownload now?",
+                    QMessageBox.Yes | QMessageBox.No
+                )
+                if reply == QMessageBox.Yes:
+                    self.entry_bv.setText(text)
+                    self.on_click_download()
+            else:
+                self.last_clipboard = text
 
     def show_download_manager(self):
         dialog = QDialog(self)
