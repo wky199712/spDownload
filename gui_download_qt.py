@@ -139,7 +139,7 @@ class BiliDownloader(QWidget):
         super().__init__()
         self.setWindowFlags(Qt.FramelessWindowHint)
         self.setWindowTitle("Bilibili 视频下载器")
-        self.setFixedSize(520, 600)  # 高度由600改为700
+        self.setFixedSize(1120, 630)   # 设置窗口大小
         self.signals = DownloadSignals()
         self._wasActive = False
         self.is_dark = False  # 主题状态
