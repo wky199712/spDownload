@@ -326,13 +326,17 @@ class BiliDownloader(QWidget):
                             all_videos.append({
                                 "title": entry.get("title", "未知标题"),
                                 "thumbnail": entry.get("thumbnail", None),
-                                "url": entry.get("webpage_url", bv_url)
+                                "url": entry.get("webpage_url", bv_url),
+                                "uploader": entry.get("uploader", ""),
+                                "upload_date": entry.get("upload_date", ""),
                             })
                     else:
                         all_videos.append({
                             "title": info_dict.get("title", "未知标题"),
                             "thumbnail": info_dict.get("thumbnail", None),
-                            "url": bv_url
+                            "url": bv_url,
+                            "uploader": info_dict.get("uploader", ""),
+                            "upload_date": info_dict.get("upload_date", ""),
                         })
             except Exception:
                 continue
@@ -354,7 +358,12 @@ class BiliDownloader(QWidget):
             return
         for info in infos:
             title = info["title"]
-            safe_title = safe_filename(title)
+            up = info.get("uploader", "UP主")
+            date = info.get("upload_date", "")
+            # 应用模板
+            template = getattr(self, "filename_template", "{title}")
+            filename = template.format(title=title, up主=up, date=date)
+            safe_title = safe_filename(filename)
             ydl_opts = {
                 'format': self.get_quality_format(),
                 'outtmpl': os.path.join(self.download_path, f'{safe_title}.%(ext)s'),
@@ -363,6 +372,8 @@ class BiliDownloader(QWidget):
                 'progress_hooks': [self.update_progress],
                 'quiet': True,
             }
+            if getattr(self, "proxy_url", ""):
+                ydl_opts['proxy'] = self.proxy_url
             self.download_queue.append((title, "下载中" if self.is_cn else "Downloading"))
             retry = 0
             max_retry = 3
@@ -734,7 +745,7 @@ class BiliDownloader(QWidget):
     def show_settings_dialog(self):
         dialog = QDialog(self)
         dialog.setWindowTitle("设置" if self.is_cn else "Settings")
-        dialog.setFixedSize(420, 280)
+        dialog.setFixedSize(420, 440)
         layout = QVBoxLayout(dialog)
 
         # 下载路径
@@ -762,6 +773,20 @@ class BiliDownloader(QWidget):
         layout.addWidget(thread_label)
         layout.addWidget(thread_box)
 
+        # 文件命名模板
+        template_label = QLabel("文件命名模板：" if self.is_cn else "Filename Template:")
+        template_edit = QLineEdit(getattr(self, "filename_template", "{title}"))
+        template_edit.setPlaceholderText("{title}、{up主}、{date} 可用")
+        layout.addWidget(template_label)
+        layout.addWidget(template_edit)
+
+        # 代理设置
+        proxy_label = QLabel("代理（如 http://127.0.0.1:7890 或 socks5://127.0.0.1:1080）" if self.is_cn else "Proxy (e.g. http://127.0.0.1:7890 or socks5://127.0.0.1:1080)")
+        proxy_edit = QLineEdit(getattr(self, "proxy_url", ""))
+        proxy_edit.setPlaceholderText("留空为不使用代理" if self.is_cn else "Leave blank for no proxy")
+        layout.addWidget(proxy_label)
+        layout.addWidget(proxy_edit)
+
         # 主题切换
         theme_btn = QPushButton("切换主题" if self.is_cn else "Toggle Theme")
         theme_btn.clicked.connect(self.toggle_theme)
@@ -781,6 +806,8 @@ class BiliDownloader(QWidget):
             self.download_path = path_edit.text()
             self.max_workers = int(thread_box.currentText())
             self.executor._max_workers = self.max_workers
+            self.filename_template = template_edit.text().strip() or "{title}"
+            self.proxy_url = proxy_edit.text().strip()
             dialog.accept()
         save_btn.clicked.connect(save_settings)
         layout.addWidget(save_btn)
