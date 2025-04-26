@@ -231,7 +231,14 @@ class BiliDownloader(QWidget):
         self.download_btn.pressed.connect(lambda: self.animate_button(self.download_btn, 0.95))
         self.download_btn.released.connect(lambda: self.animate_button(self.download_btn, 1.0))
         content.addWidget(self.download_btn)
-        
+
+        # 下载队列按钮
+        self.queue_btn = QPushButton("下载队列" if self.is_cn else "Queue")
+        self.queue_btn.setIcon(QIcon("queue.png"))
+        self.queue_btn.setIconSize(QSize(20, 20))
+        self.queue_btn.clicked.connect(self.show_download_queue)
+        content.addWidget(self.queue_btn)  
+
         # 设置按钮
         self.download_manager_btn = QPushButton("下载管理" if self.is_cn else "Manager")
         self.download_manager_btn.setIcon(QIcon("folder.png"))  # 使用folder.png图标
@@ -702,7 +709,9 @@ class BiliDownloader(QWidget):
     def toggle_theme(self):
         self.is_dark = not self.is_dark
         self.setStyleSheet(self.get_stylesheet())
-
+    def closeEvent(self, event):
+        self.executor.shutdown(wait=False)
+        event.accept()
     def toggle_lang(self):
         self.is_cn = not self.is_cn
         # 顶部按钮
@@ -778,7 +787,32 @@ class BiliDownloader(QWidget):
 
         dialog.setLayout(layout)
         dialog.exec_()
+    def show_download_queue(self):
+        dialog = QDialog(self)
+        dialog.setWindowTitle("下载队列" if self.is_cn else "Download Queue")
+        dialog.setFixedSize(480, 400)
+        layout = QVBoxLayout(dialog)
+        list_widget = QListWidget()
+        for title, status in self.download_queue:
+            text = f"{title}  -  {status}"
+            list_item = QListWidgetItem(text)
+            list_widget.addItem(list_item)
+        layout.addWidget(list_widget)
 
+        # 取消任务按钮
+        cancel_btn = QPushButton("取消任务" if self.is_cn else "Cancel Task")
+        layout.addWidget(cancel_btn)
+
+        def cancel_task():
+            row = list_widget.currentRow()
+            if row >= 0:
+                # 简单实现：直接标记为取消，下次进度回调时中断
+                self._cancel_download = True
+                self.download_queue[row] = (self.download_queue[row][0], "已取消" if self.is_cn else "Canceled")
+                list_widget.item(row).setText(f"{self.download_queue[row][0]}  -  {'已取消' if self.is_cn else 'Canceled'}")
+
+        cancel_btn.clicked.connect(cancel_task)
+        dialog.exec_()
     def animate_button(self, btn, scale):
         anim = QPropertyAnimation(btn, b"geometry")
         rect = btn.geometry()
