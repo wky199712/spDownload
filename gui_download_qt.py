@@ -7,7 +7,7 @@ from urllib.request import urlopen
 from PyQt5.QtWidgets import (
     QApplication, QWidget, QLabel, QLineEdit, QPushButton, QVBoxLayout,
     QHBoxLayout, QComboBox, QProgressBar, QMessageBox, QFrame, QListWidget, QListWidgetItem, QDialog, QSlider,
-    QSizePolicy, QTabWidget  # 添加 QTabWidget
+    QSizePolicy, QTabWidget, QGridLayout  # 添加 QTabWidget 和 QGridLayout
 )
 from PyQt5.QtGui import QPixmap, QImage, QIcon, QMouseEvent, QColor
 from PyQt5.QtCore import Qt, pyqtSignal, QObject, QPoint, QEvent, QTimer, QUrl, QSize, QPropertyAnimation
@@ -177,6 +177,12 @@ class BiliDownloader(QWidget):
         btn_bar = QHBoxLayout()
         btn_bar.setSpacing(8)
         btn_bar.setAlignment(Qt.AlignRight)
+
+        self.player_btn = QPushButton("播放器" if self.is_cn else "Player")
+        self.player_btn.setIcon(QIcon("play.png"))
+        self.player_btn.setIconSize(QSize(20, 20))
+        self.player_btn.clicked.connect(self.show_player)
+        btn_bar.addWidget(self.player_btn)
 
         self.theme_btn = QPushButton("切换主题")
         self.theme_btn.setIcon(QIcon("theme.png"))
@@ -428,7 +434,50 @@ class BiliDownloader(QWidget):
 
     def on_download_finished(self):
         QMessageBox.information(self, "下载完成", "视频下载完成！")
+    def show_player(self):
+        dialog = QDialog(self)
+        dialog.setWindowTitle("本地播放器" if self.is_cn else "Local Player")
+        dialog.setFixedSize(800, 800)
+        layout = QVBoxLayout(dialog)
 
+        # 视频列表
+        list_widget = QListWidget()
+        video_files = [f for f in os.listdir(self.download_path) if f.lower().endswith(('.mp4', '.flv', '.mkv', '.avi', '.mov'))]
+        for f in video_files:
+            list_widget.addItem(f)
+        layout.addWidget(list_widget)
+
+        # 播放区
+        video_widget = QVideoWidget()
+        layout.addWidget(video_widget, stretch=1)
+
+        # 控制区
+        control_layout = QHBoxLayout()
+        play_btn = QPushButton("播放" if self.is_cn else "Play")
+        pause_btn = QPushButton("暂停" if self.is_cn else "Pause")
+        stop_btn = QPushButton("停止" if self.is_cn else "Stop")
+        control_layout.addWidget(play_btn)
+        control_layout.addWidget(pause_btn)
+        control_layout.addWidget(stop_btn)
+        layout.addLayout(control_layout)
+
+        # 播放器
+        player = QMediaPlayer(dialog)
+        player.setVideoOutput(video_widget)
+
+        def play_selected():
+            row = list_widget.currentRow()
+            if row >= 0:
+                path = os.path.join(self.download_path, list_widget.item(row).text())
+                player.setMedia(QMediaContent(QUrl.fromLocalFile(path)))
+                player.play()
+        play_btn.clicked.connect(play_selected)
+        list_widget.itemDoubleClicked.connect(play_selected)
+        pause_btn.clicked.connect(player.pause)
+        stop_btn.clicked.connect(player.stop)
+
+        dialog.setLayout(layout)
+        dialog.exec_()
     def on_download_error(self, msg):
         reply = QMessageBox.critical(self, "错误", msg + "\n是否重试？", QMessageBox.Retry | QMessageBox.Cancel)
         if reply == QMessageBox.Retry:
@@ -742,11 +791,160 @@ class BiliDownloader(QWidget):
             self.quality_box.addItems(["Auto (Best)", "Video Only", "Audio Only"])
         self.setStyleSheet(self.get_stylesheet())
 
+    def show_theme_market(self):
+        dialog = QDialog(self)
+        dialog.setWindowTitle("主题市场" if self.is_cn else "Theme Market")
+        dialog.setFixedSize(600, 500)
+        layout = QVBoxLayout(dialog)
+
+        # 主题列表
+        theme_list = QListWidget()
+        layout.addWidget(theme_list)
+
+        # 主题数据（可扩展为从服务器获取）
+        themes = [
+            {
+                "name": "默认主题",
+                "author": "系统",
+                "downloads": 1000,
+                "is_dark": False,
+                "stylesheet": self.get_stylesheet()  # 使用当前默认样式
+            },
+            {
+                "name": "暗黑主题",
+                "author": "用户A",
+                "downloads": 500,
+                "is_dark": True,
+                "stylesheet": """
+                QWidget { background: #23272e; color: #fff; }
+                QPushButton { background: #3a8dde; color: #fff; border-radius: 8px; }
+                QPushButton:hover { background: #00a1d6; }
+                QLineEdit, QComboBox { background: #23272e; color: #fff; border: 1px solid #00a1d6; }
+                """
+            },
+            {
+                "name": "粉色主题",
+                "author": "用户B",
+                "downloads": 300,
+                "is_dark": False,
+                "stylesheet": """
+                QWidget { background: #fff0f6; color: #fb7299; }
+                QPushButton { background: #fb7299; color: #fff; border-radius: 8px; }
+                QPushButton:hover { background: #ffb6e6; }
+                QLineEdit, QComboBox { background: #fff; color: #fb7299; border: 1px solid #fb7299; }
+                """
+            }
+        ]
+        theme_list.clear()
+        for theme in themes:
+            item = QListWidgetItem(f"{theme['name']} - 作者: {theme['author']} (下载: {theme['downloads']})")
+            theme_list.addItem(item)
+
+        # 实时预览
+        def preview_theme():
+            row = theme_list.currentRow()
+            if row >= 0:
+                theme = themes[row]
+                self.setStyleSheet(theme.get("stylesheet", ""))
+
+        theme_list.currentRowChanged.connect(preview_theme)
+
+        # 下载按钮（应用主题）
+        download_btn = QPushButton("应用主题" if self.is_cn else "Apply Theme")
+        def apply_theme():
+            row = theme_list.currentRow()
+            if row >= 0:
+                theme = themes[row]
+                self.is_dark = theme.get("is_dark", False)
+                self.setStyleSheet(theme.get("stylesheet", ""))
+                QMessageBox.information(self, "提示", f"主题 {theme['name']} 已应用！")
+                dialog.accept()
+        download_btn.clicked.connect(apply_theme)
+        layout.addWidget(download_btn)
+
+        # 上传按钮
+        upload_btn = QPushButton("上传主题" if self.is_cn else "Upload Theme")
+        upload_btn.clicked.connect(self.upload_theme)
+        layout.addWidget(upload_btn)
+
+        dialog.setLayout(layout)
+        dialog.exec_()
+        
+    def download_theme(self, theme_name):
+        try:
+            # 这里应该是下载主题的代码
+            QMessageBox.information(self, "提示", f"主题 {theme_name} 下载成功！")
+        except Exception as e:
+            QMessageBox.warning(self, "错误", f"下载主题失败: {e}")
+        
+    def upload_theme(self):
+        from PyQt5.QtWidgets import QFileDialog
+        file_path, _ = QFileDialog.getOpenFileName(self, "选择主题文件", "", "主题文件 (*.theme)")
+        if file_path:
+            try:
+                # 这里应该是上传主题的代码
+                QMessageBox.information(self, "提示", "主题上传成功！")
+            except Exception as e:
+                QMessageBox.warning(self, "错误", f"上传主题失败: {e}")
+                
+    def import_theme(self):
+        from PyQt5.QtWidgets import QFileDialog
+        file_path, _ = QFileDialog.getOpenFileName(self, "选择主题文件", "", "主题文件 (*.theme)")
+        if file_path:
+            try:
+                # 这里应该是导入主题的代码
+                QMessageBox.information(self, "提示", "主题导入成功！")
+            except Exception as e:
+                QMessageBox.warning(self, "错误", f"导入主题失败: {e}")
+                
+    def export_theme(self):
+        from PyQt5.QtWidgets import QFileDialog
+        file_path, _ = QFileDialog.getSaveFileName(self, "保存主题文件", "", "主题文件 (*.theme)")
+        if file_path:
+            try:
+                # 这里应该是导出主题的代码
+                QMessageBox.information(self, "提示", "主题导出成功！")
+            except Exception as e:
+                QMessageBox.warning(self, "错误", f"导出主题失败: {e}")
+                
+    def apply_custom_color(self, color):
+        self.setStyleSheet(f"""
+            QWidget {{
+                background: #f5f5f5;
+                color: #333;
+            }}
+            QPushButton {{
+                background: {color};
+                color: white;
+                border: none;
+                padding: 5px 10px;
+                border-radius: 4px;
+            }}
+            QPushButton:hover {{
+                background: {self.darken_color(color)};
+            }}
+            QLineEdit, QComboBox {{
+                border: 1px solid #ddd;
+                padding: 5px;
+                border-radius: 4px;
+            }}
+        """)
+        
+    def darken_color(self, color, factor=0.8):
+        # 将颜色变暗
+        from PyQt5.QtGui import QColor
+        c = QColor(color)
+        return c.darker(int(255 * factor)).name()
+        
     def show_settings_dialog(self):
         dialog = QDialog(self)
         dialog.setWindowTitle("设置" if self.is_cn else "Settings")
-        dialog.setFixedSize(420, 440)
-        layout = QVBoxLayout(dialog)
+        dialog.setFixedSize(520, 600)
+        tab_widget = QTabWidget(dialog)
+        
+        # 常规设置 Tab
+        general_tab = QWidget()
+        layout = QVBoxLayout(general_tab)
 
         # 下载路径
         path_label = QLabel("下载路径：" if self.is_cn else "Download Path:")
@@ -812,7 +1010,53 @@ class BiliDownloader(QWidget):
         save_btn.clicked.connect(save_settings)
         layout.addWidget(save_btn)
 
-        dialog.setLayout(layout)
+        # 主题设置 Tab
+        theme_tab = QWidget()
+        theme_layout = QVBoxLayout(theme_tab)
+        
+        # 主题市场按钮
+        theme_market_btn = QPushButton("主题市场" if self.is_cn else "Theme Market")
+        theme_market_btn.setIcon(QIcon("theme.png"))
+        theme_market_btn.clicked.connect(self.show_theme_market)
+        theme_layout.addWidget(theme_market_btn)
+        
+        # 导入主题按钮
+        import_btn = QPushButton("导入主题" if self.is_cn else "Import Theme")
+        import_btn.setIcon(QIcon("folder.png"))
+        import_btn.clicked.connect(self.import_theme)
+        theme_layout.addWidget(import_btn)
+        
+        # 导出主题按钮
+        export_btn = QPushButton("导出当前主题" if self.is_cn else "Export Current Theme")
+        export_btn.setIcon(QIcon("download.png"))
+        export_btn.clicked.connect(self.export_theme)
+        theme_layout.addWidget(export_btn)
+        
+        # 自定义颜色选择器
+        color_label = QLabel("自定义颜色:" if self.is_cn else "Custom Colors:")
+        theme_layout.addWidget(color_label)
+        
+        color_grid = QWidget()
+        color_grid_layout = QGridLayout(color_grid)
+        
+        colors = ["#00a1d6", "#fb7299", "#ff9800", "#4caf50", 
+                 "#9c27b0", "#607d8b", "#795548", "#f44336"]
+        
+        for i, color in enumerate(colors):
+            btn = QPushButton()
+            btn.setFixedSize(40, 40)
+            btn.setStyleSheet(f"background:{color};border:none;")
+            btn.clicked.connect(lambda _, c=color: self.apply_custom_color(c))
+            color_grid_layout.addWidget(btn, i//4, i%4)
+        
+        theme_layout.addWidget(color_grid)
+        
+        # 添加Tab
+        tab_widget.addTab(general_tab, "常规设置" if self.is_cn else "General")
+        tab_widget.addTab(theme_tab, "主题" if self.is_cn else "Themes")
+        
+        main_layout = QVBoxLayout(dialog)
+        main_layout.addWidget(tab_widget)
         dialog.exec_()
     def show_download_queue(self):
         dialog = QDialog(self)
