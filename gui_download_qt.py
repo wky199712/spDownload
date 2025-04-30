@@ -4,6 +4,7 @@ import re
 import threading
 import yt_dlp
 from urllib.request import urlopen
+import time
 from PyQt5.QtWidgets import (
     QApplication, QWidget, QLabel, QLineEdit, QPushButton, QVBoxLayout,
     QHBoxLayout, QComboBox, QProgressBar, QMessageBox, QFrame, QListWidget, QListWidgetItem, QDialog, QSlider,
@@ -20,6 +21,8 @@ from PyQt5.QtCore import QRect
 import socket
 from concurrent.futures import ThreadPoolExecutor
 import json
+import requests
+from bs4 import BeautifulSoup
 
 # 创建下载文件夹
 if not os.path.exists("download"):
@@ -164,10 +167,144 @@ class BiliDownloader(QWidget):
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
-
-        # 自定义标题栏
+        # 添加自定义顶部栏
         self.title_bar = TitleBar(self)
         main_layout.addWidget(self.title_bar)
+        
+        self.tab_widget = QTabWidget()
+        main_layout.addWidget(self.tab_widget)
+
+        # 动漫资源站Tab
+        self.anime_zone_widget = QWidget()
+        self.init_anime_zone_ui(self.anime_zone_widget)
+        self.tab_widget.addTab(self.anime_zone_widget, "动漫资源站")
+
+        # B站下载器Tab
+        self.downloader_widget = QWidget()
+        self.init_downloader_ui(self.downloader_widget)
+        self.tab_widget.addTab(self.downloader_widget, "B站下载器")
+
+    def init_anime_zone_ui(self, parent):
+        layout = QVBoxLayout(parent)
+        # 搜索框
+        search_box = QLineEdit()
+        search_box.setPlaceholderText("输入动漫名称搜索…")
+        layout.addWidget(search_box)
+
+        # 动漫列表
+        anime_list = QListWidget()
+        layout.addWidget(anime_list, stretch=1)
+
+        # 播放区
+        video_widget = QVideoWidget()
+        layout.addWidget(video_widget, stretch=2)
+
+        player = QMediaPlayer(parent)
+        player.setVideoOutput(video_widget)
+
+        # 简单爬取樱花动漫首页（示例）
+        def load_anime_list(keyword=""):
+            anime_list.clear()
+            base_url = "http://www.yhdm95.com"
+            if keyword:
+                url = f"{base_url}/search/{keyword}.html"
+            else:
+                url = base_url + "/"
+            self._anime_data = []
+            for attempt in range(3):
+                try:
+                    resp = requests.get(url, timeout=15)
+                    resp.encoding = "utf-8"
+                    soup = BeautifulSoup(resp.text, "html.parser")
+                    items = soup.select(".lpic li a")
+                    if not items:
+                        QMessageBox.warning(self, "提示", "未获取到动漫数据，请检查网络或站点结构！")
+                    for a in items:
+                        title = a.get("title") or a.text.strip()
+                        href = a.get("href")
+                        img_tag = a.find("img")
+                        cover_url = img_tag["src"] if img_tag and img_tag.has_attr("src") else ""
+                        if href and title:
+                            self._anime_data.append({"title": title, "url": base_url + href, "cover": cover_url})
+                            item = QListWidgetItem(title)
+                            if cover_url:
+                                try:
+                                    img_data = urlopen(cover_url).read()
+                                    pixmap = QPixmap()
+                                    pixmap.loadFromData(img_data)
+                                    pixmap = pixmap.scaled(120, 68, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                                    item.setIcon(QIcon(pixmap))
+                                except Exception:
+                                    pass
+                            anime_list.addItem(item)
+                    return
+                except Exception as e:
+                    if attempt == 2:
+                        QMessageBox.warning(self, "提示", f"动漫资源加载失败：{e}")
+                    else:
+                        time.sleep(2)
+
+        load_anime_list()
+
+        def search():
+            keyword = search_box.text().strip()
+            load_anime_list(keyword)
+        search_box.returnPressed.connect(search)
+
+        # 选中动漫后爬取播放页并在线播放
+        def play_selected():
+            row = anime_list.currentRow()
+            if row >= 0:
+                anime = self._anime_data[row]
+                try:
+                    resp = requests.get(anime["url"], timeout=10)
+                    resp.encoding = "utf-8"
+                    soup = BeautifulSoup(resp.text, "html.parser")
+                    ep_list = soup.select(".movurl a")
+                    if not ep_list:
+                        QMessageBox.warning(self, "提示", "未找到分集信息")
+                        return
+                    ep_dialog = QDialog(self)
+                    ep_dialog.setWindowTitle(anime["title"])
+                    ep_layout = QVBoxLayout(ep_dialog)
+                    ep_list_widget = QListWidget()
+                    ep_urls = []
+                    for a in ep_list:
+                        ep_title = a.text.strip()
+                        ep_href = a.get("href")
+                        if ep_href:
+                            ep_urls.append("http://www.yhdm95.com" + ep_href)
+                            ep_list_widget.addItem(ep_title)
+                    ep_layout.addWidget(ep_list_widget)
+                    video_widget = QVideoWidget()
+                    ep_layout.addWidget(video_widget)
+                    player = QMediaPlayer(ep_dialog)
+                    player.setVideoOutput(video_widget)
+                    def play_episode():
+                        ep_row = ep_list_widget.currentRow()
+                        if ep_row >= 0:
+                            ep_url = ep_urls[ep_row]
+                            ep_resp = requests.get(ep_url, timeout=10)
+                            ep_resp.encoding = "utf-8"
+                            ep_soup = BeautifulSoup(ep_resp.text, "html.parser")
+                            iframe = ep_soup.find("iframe")
+                            if iframe and iframe.get("src"):
+                                play_url = iframe["src"]
+                                if not play_url.startswith("http"):
+                                    play_url = "http://www.yhdm95.com" + play_url
+                                player.setMedia(QMediaContent(QUrl(play_url)))
+                                player.play()
+                    ep_list_widget.itemDoubleClicked.connect(play_episode)
+                    ep_dialog.exec_()
+                except Exception as e:
+                    QMessageBox.warning(self, "提示", f"播放页解析失败：{e}")
+
+        anime_list.itemDoubleClicked.connect(play_selected)
+
+    def init_downloader_ui(self, widget):
+        layout = QVBoxLayout(widget)
+        label = QLabel("欢迎来到B站下载器！")
+        layout.addWidget(label)
 
         content = QVBoxLayout()
         content.setContentsMargins(20, 10, 20, 10)
@@ -257,7 +394,7 @@ class BiliDownloader(QWidget):
         self.progress_bar.setValue(0)
         content.addWidget(self.progress_bar)
 
-        main_layout.addLayout(content)
+        layout.addLayout(content)
 
     def get_quality_format(self):
         idx = self.quality_box.currentIndex()
@@ -413,6 +550,7 @@ class BiliDownloader(QWidget):
                             "error": str(e)
                         })
                         self.save_history()
+
     def update_progress(self, d):
         if self._cancel_download:
             raise Exception("用户取消下载")
