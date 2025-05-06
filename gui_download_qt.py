@@ -193,16 +193,9 @@ class BiliDownloader(QWidget):
 
         # 动漫列表
         anime_list = QListWidget()
+        anime_list.setIconSize(QSize(120, 68))
         layout.addWidget(anime_list, stretch=1)
 
-        # 播放区
-        video_widget = QVideoWidget()
-        layout.addWidget(video_widget, stretch=2)
-
-        player = QMediaPlayer(parent)
-        player.setVideoOutput(video_widget)
-
-        # 简单爬取樱花动漫首页（示例）
         def load_anime_list(keyword=""):
             anime_list.clear()
             base_url = "http://www.yhdm95.com"
@@ -251,7 +244,7 @@ class BiliDownloader(QWidget):
             load_anime_list(keyword)
         search_box.returnPressed.connect(search)
 
-        # 选中动漫后爬取播放页并在线播放
+        # 选中动漫后爬取播放页并在线播放（弹窗）
         def play_selected():
             row = anime_list.currentRow()
             if row >= 0:
