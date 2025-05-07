@@ -138,49 +138,34 @@ try:
                                 ep_href = ep.get("href")
                                 play_url = base_url + ep_href if ep_href.startswith("/") else base_url + "/" + ep_href
 
-                                # 进入分集播放页，提取iframe src
+                                # 进入分集播放页
                                 driver.get(play_url)
                                 WebDriverWait(driver, 8).until(
                                     EC.presence_of_element_located((By.CSS_SELECTOR, "iframe#playiframe"))
                                 )
-                                play_html = driver.page_source
-                                play_soup = BeautifulSoup(play_html, "html.parser")
-                                iframe = play_soup.find("iframe", id="playiframe")
-                                video_src = iframe.get("src") if iframe else ""
+                                iframe_elem = driver.find_element(By.CSS_SELECTOR, "iframe#playiframe")
+                                driver.switch_to.frame(iframe_elem)
 
-                                print(f"线路:{ul_id} 集数:{ep_title} 链接:{play_url} 视频源:{video_src}")
+                                # 可选：如果还有第二层iframe，再切换
+                                try:
+                                    inner_iframe_elem = driver.find_element(By.TAG_NAME, "iframe")
+                                    driver.switch_to.frame(inner_iframe_elem)
+                                except Exception:
+                                    pass  # 没有第二层iframe就跳过
 
-                                # 进入第一层iframe
-                                driver.get(video_src)
-                                time.sleep(2)
-                                iframe_html = driver.page_source
-                                iframe_soup = BeautifulSoup(iframe_html, "html.parser")
-                                inner_iframe = iframe_soup.find("iframe")
-                                print(f"inner_iframe: {inner_iframe}")
+                                # 等待video标签出现
+                                WebDriverWait(driver, 10).until(
+                                    EC.presence_of_element_located((By.TAG_NAME, "video"))
+                                )
+                                real_video_url = driver.execute_script(
+                                    "return document.querySelector('video') && document.querySelector('video').currentSrc;"
+                                )
+                                print(f"最终视频直链: {real_video_url}")
 
-                                real_video_url = ""
-                                if inner_iframe and inner_iframe.get("src"):
-                                    inner_src = inner_iframe.get("src")
-                                    inner_src = urljoin(video_src, inner_src)
-                                    print(f"完整 inner_src: {inner_src}")
-                                    # 进入第二层iframe
-                                    driver.get(inner_src)
-                                    WebDriverWait(driver, 15).until(
-                                        EC.presence_of_element_located((By.CSS_SELECTOR, "video"))
-                                    )
-                                    # 用JS获取currentSrc，兼容动态赋值
-                                    real_video_url = driver.execute_script(
-                                        "return document.querySelector('video') && document.querySelector('video').currentSrc;"
-                                    )
-                                    if not real_video_url:
-                                        # 兜底用 src 属性
-                                        final_html = driver.page_source
-                                        final_soup = BeautifulSoup(final_html, "html.parser")
-                                        video_tag = final_soup.find("video")
-                                        real_video_url = video_tag.get("src") if video_tag else ""
-                                    print(f"最终视频直链: {real_video_url}")
-                                else:
-                                    print("未找到 inner_iframe，页面结构可能已变或加载失败")
+                                # 切回主文档，避免影响后续操作
+                                driver.switch_to.default_content()
+
+                                print(f"线路:{ul_id} 集数:{ep_title} 链接:{play_url} 视频源:{real_video_url}")
 
                                 with open("debug_iframe.html", "w", encoding="utf-8") as f:
                                     f.write(driver.page_source)
@@ -191,8 +176,8 @@ try:
                                     c.execute("SELECT id FROM episode WHERE anime_id=? AND title=? AND play_url=?", (anime_id, ep_title, play_url))
                                     if not c.fetchone():
                                         c.execute(
-                                            "INSERT INTO episode (anime_id, title, play_url, video_src, real_video_url) VALUES (?, ?, ?, ?, ?)",
-                                            (anime_id, ep_title, play_url, video_src, real_video_url)
+                                            "INSERT INTO episode (anime_id, title, play_url, video_src, real_video_url, line_id) VALUES (?, ?, ?, ?, ?, ?)",
+                                            (anime_id, ep_title, play_url, real_video_url, real_video_url, ul_id)
                                         )
                                     conn.commit()
                                 except Exception as db_e:
