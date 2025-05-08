@@ -93,161 +93,162 @@ try:
             if row:
                 print(f"动漫已采集过，跳过: {name}")
                 continue
+
             # 进入详情页采集简介和分集（只采集一次，不重试）
             detail_url = base_url + href
+            driver.get(detail_url)
+            WebDriverWait(driver, 12).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, "ul[id^='ul_playlist_']"))
+            )
+            detail_html = driver.page_source
+            detail_soup = BeautifulSoup(detail_html, "html.parser")
+            intro_tag = detail_soup.select_one(".info-intro")
+            if not intro_tag:
+                intro_tag = detail_soup.select_one(".des2") or detail_soup.select_one(".des1")
+            intro_text = intro_tag.text.strip() if intro_tag else ""
+
+            # 提取地区、年份、总集数
+            area, year, total_eps = "", "", ""
+            type_list = []
+            for dd in detail_soup.select("div.info dd"):
+                b_tag = dd.find("b")
+                if b_tag:
+                    b_tag.extract()
+                txt = dd.get_text(strip=True)
+                if "地区" in dd.text:
+                    area = txt
+                elif "年代" in dd.text:
+                    year = txt
+                elif "更新至" in dd.text and "集" in dd.text:
+                    total_eps = txt.replace("更新至", "").replace("集", "").strip()
+            type_links = detail_soup.select("div.info a")
+            type_list = [a.get_text(strip=True) for a in type_links]
+            type_str = ",".join(type_list)
+            intro_tag = detail_soup.select_one(".info-intro")
+            if not intro_tag:
+                intro_tag = detail_soup.select_one(".des2") or detail_soup.select_one(".des1")
+            if intro_tag:
+                b_tag = intro_tag.find("b")
+                if b_tag:
+                    b_tag.extract()
+                intro_text = intro_tag.get_text(strip=True)
+            else:
+                intro_text = ""
+
             try:
-                driver.get(detail_url)
-                WebDriverWait(driver, 12).until(
-                    EC.presence_of_element_located((By.CSS_SELECTOR, "ul[id^='ul_playlist_']"))
+                c.execute(
+                    "INSERT INTO anime (name, href, cover, intro, year, area, type, total_eps) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                    (name, href, cover, intro_text, year, area, type_str, total_eps)
                 )
-                detail_html = driver.page_source
-                detail_soup = BeautifulSoup(detail_html, "html.parser")
-                intro_tag = detail_soup.select_one(".info-intro")
-                if not intro_tag:
-                    intro_tag = detail_soup.select_one(".des2") or detail_soup.select_one(".des1")
-                intro_text = intro_tag.text.strip() if intro_tag else ""
-                
-                # 提取地区、年份、总集数
-                area, year, total_eps = "", "", ""
-                type_list = []
-
-                for dd in detail_soup.select("div.info dd"):
-                    # 只取b标签后的纯文本
-                    b_tag = dd.find("b")
-                    if b_tag:
-                        b_tag.extract()  # 移除b标签本身
-                    txt = dd.get_text(strip=True)
-                    if "地区" in dd.text:
-                        area = txt
-                    elif "年代" in dd.text:
-                        year = txt
-                    elif "更新至" in dd.text and "集" in dd.text:
-                        total_eps = txt.replace("更新至", "").replace("集", "").strip()
-
-                # 类型
-                type_links = detail_soup.select("div.info a")
-                type_list = [a.get_text(strip=True) for a in type_links]
-                type_str = ",".join(type_list)
-
-                # 剧情简介
-                intro_tag = detail_soup.select_one(".info-intro")
-                if not intro_tag:
-                    intro_tag = detail_soup.select_one(".des2") or detail_soup.select_one(".des1")
-                if intro_tag:
-                    # 去掉b标签内容
-                    b_tag = intro_tag.find("b")
-                    if b_tag:
-                        b_tag.extract()
-                    intro_text = intro_tag.get_text(strip=True)
-                else:
-                    intro_text = ""
-
-                # 详情页采集成功后，直接插入anime
-                try:
-                    c.execute(
-                        "INSERT INTO anime (name, href, cover, intro, year, area, type, total_eps) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                        (name, href, cover, intro_text, year, area, type_str, total_eps)
-                    )
-                    anime_id = c.lastrowid
-                    conn.commit()
-                    print("插入anime成功:", name, href)
-                except Exception as e:
-                    print("插入anime失败:", e, name, href)
-
-                # --------- 分集采集逻辑 ---------
-                first_ul = detail_soup.select_one("ul[id^='ul_playlist_']")
-                if not first_ul:
-                    print("未找到分集ul，跳过")
-                    continue  # 跳到下一个li
-                ep_links = []
-                for ep_a in first_ul.find_all("a"):
-                    ep_href = ep_a.get("href")
-                    ep_title = ep_a.text.strip()
-                    if ep_href:
-                        ep_links.append((ep_title, ep_href))
-
-                for ep_title, ep_href in ep_links:
-                    play_url = urljoin(base_url, ep_href)
-                    driver.get(play_url)
-                    WebDriverWait(driver, 8).until(
-                        EC.presence_of_element_located((By.CSS_SELECTOR, "li[id^='tab']"))
-                    )
-                    tab_lis = driver.find_elements(By.CSS_SELECTOR, "li[id^='tab']")
-                    tab_info_list = []
-                    for tab_li in tab_lis:
-                        tab_id = tab_li.get_attribute("id")
-                        tab_name = tab_li.text.strip()
-                        tab_info_list.append({"id": tab_id, "name": tab_name})
-
-                    for tab_idx, tab_info in enumerate(tab_info_list):
-                        tab_lis = driver.find_elements(By.CSS_SELECTOR, "li[id^='tab']")
-                        if (tab_idx >= len(tab_lis)):
-                            print(f"未找到ul: tab_idx={tab_idx}")
-                            continue
-                        tab_li = tab_lis[tab_idx]
-                        tab_li.click()
-                        time.sleep(1)
-                        ul_elems = driver.find_elements(By.CSS_SELECTOR, "ul[id^='ul_playlist_']")
-                        if (tab_idx >= len(ul_elems)):
-                            print(f"未找到ul: tab_idx={tab_idx}")
-                            continue
-                        ul_elem = ul_elems[tab_idx]
-                        ul_id = ul_elem.get_attribute("id")
-                        ep_a_tags = ul_elem.find_elements(By.TAG_NAME, "a")
-                        ep_list = []
-                        for ep_a in ep_a_tags:
-                            ep_title2 = ep_a.text.strip()
-                            ep_href2 = ep_a.get_attribute("href")
-                            if ep_href2:
-                                ep_list.append((ep_title2, ep_href2))
-
-                        for ep_title2, ep_href2 in ep_list:
-                            play_url2 = urljoin(base_url, ep_href2)
-                            try:
-                                driver.get(play_url2)
-                                WebDriverWait(driver, 8).until(
-                                    EC.presence_of_element_located((By.CSS_SELECTOR, "iframe#playiframe"))
-                                )
-                                iframe_elem = driver.find_element(By.CSS_SELECTOR, "iframe#playiframe")
-                                driver.switch_to.frame(iframe_elem)
-                                try:
-                                    inner_iframe_elem = driver.find_element(By.TAG_NAME, "iframe")
-                                    driver.switch_to.frame(inner_iframe_elem)
-                                except Exception:
-                                    pass
-                                WebDriverWait(driver, 5).until(
-                                    EC.presence_of_element_located((By.TAG_NAME, "video"))
-                                )
-                                real_video_url = driver.execute_script(
-                                    "return document.querySelector('video') && document.querySelector('video').currentSrc;"
-                                )
-                                driver.switch_to.default_content()
-                                print(f"分集:{ep_title2} 线路:{tab_info['name']}({ul_id}) 链接:{play_url2} 视频源:{real_video_url}")
-
-                                # 存库，带上线路名/ul_id
-                                try:
-                                    c.execute("SELECT id FROM episode WHERE anime_id=? AND title=? AND play_url=? AND line_id=?",
-                                              (anime_id, ep_title2, play_url2, ul_id))
-                                    if not c.fetchone():
-                                        c.execute(
-                                            "INSERT INTO episode (anime_id, title, play_url, video_src, real_video_url, line_id) VALUES (?, ?, ?, ?, ?, ?)",
-                                            (anime_id, ep_title2, play_url2, real_video_url, real_video_url, ul_id)
-                                        )
-                                        conn.commit()
-                                except Exception as db_e:
-                                    print(f"插入episode表出错: {db_e}，anime_id={anime_id}, title={ep_title2}, play_url={play_url2}, line_id={ul_id}")
-                            except Exception as e:
-                                print(f"采集失败: {tab_info['name']} {ep_title2} {play_url2}，原因: {e}")
-                                try:
-                                    driver.switch_to.default_content()
-                                except Exception:
-                                    pass
-                                continue  # 只跳过当前分集
-                # --------- 分集采集逻辑结束 ---------
+                anime_id = c.lastrowid
+                conn.commit()
+                print("插入anime成功:", name, href)
             except Exception as e:
-                print(f"采集详情页或分集时出错，跳过: {name}，错误：{e}")
-                continue  # 跳到下一个li
-            time.sleep(1)
+                print("插入anime失败:", e, name, href)
+
+            # --------- 分集采集逻辑 ---------
+            first_ul = detail_soup.select_one("ul[id^='ul_playlist_']")
+            if not first_ul:
+                print("未找到分集ul，跳过")
+                continue
+            ep_links = []
+            for ep_a in first_ul.find_all("a"):
+                ep_href = ep_a.get("href")
+                ep_title = ep_a.text.strip()
+                if ep_href:
+                    ep_links.append((ep_title, ep_href))
+
+            # 线路循环
+            for ep_title, ep_href in ep_links:
+                play_url = urljoin(base_url, ep_href)
+                driver.get(play_url)
+                WebDriverWait(driver, 8).until(
+                    EC.presence_of_element_located((By.CSS_SELECTOR, "li[id^='tab']"))
+                )
+                tab_lis = driver.find_elements(By.CSS_SELECTOR, "li[id^='tab']")
+                tab_info_list = []
+                for tab_li in tab_lis:
+                    tab_id = tab_li.get_attribute("id")
+                    tab_name = tab_li.text.strip()
+                    tab_info_list.append({"id": tab_id, "name": tab_name})
+
+                # 线路循环
+                for tab_idx, tab_info in enumerate(tab_info_list):
+                    tab_lis = driver.find_elements(By.CSS_SELECTOR, "li[id^='tab']")
+                    if (tab_idx >= len(tab_lis)):
+                        print(f"未找到ul: tab_idx={tab_idx}")
+                        continue
+                    tab_li = tab_lis[tab_idx]
+                    tab_li.click()
+                    time.sleep(1)
+                    ul_elems = driver.find_elements(By.CSS_SELECTOR, "ul[id^='ul_playlist_']")
+                    if (tab_idx >= len(ul_elems)):
+                        print(f"未找到ul: tab_idx={tab_idx}")
+                        continue
+                    ul_elem = ul_elems[tab_idx]
+                    ul_id = ul_elem.get_attribute("id")
+                    ep_a_tags = ul_elem.find_elements(By.TAG_NAME, "a")
+                    ep_list = []
+                    for ep_a in ep_a_tags:
+                        ep_title2 = ep_a.text.strip()
+                        ep_href2 = ep_a.get_attribute("href")
+                        if ep_href2:
+                            ep_list.append((ep_title2, ep_href2))
+
+                    # 分集循环
+                    for ep_idx2, (ep_title2, ep_href2) in enumerate(ep_list):
+                        play_url2 = urljoin(base_url, ep_href2)
+                        try:
+                            driver.get(play_url2)
+                            WebDriverWait(driver, 8).until(
+                                EC.presence_of_element_located((By.CSS_SELECTOR, "iframe#playiframe"))
+                            )
+                            iframe_elem = driver.find_element(By.CSS_SELECTOR, "iframe#playiframe")
+                            driver.switch_to.frame(iframe_elem)
+                            try:
+                                inner_iframe_elem = driver.find_element(By.TAG_NAME, "iframe")
+                                driver.switch_to.frame(inner_iframe_elem)
+                            except Exception:
+                                pass
+                            WebDriverWait(driver, 5).until(
+                                EC.presence_of_element_located((By.TAG_NAME, "video"))
+                            )
+                            real_video_url = driver.execute_script(
+                                "return document.querySelector('video') && document.querySelector('video').currentSrc;"
+                            )
+                            driver.switch_to.default_content()
+                            print(f"分集:{ep_title2} 线路:{tab_info['name']}({ul_id}) 链接:{play_url2} 视频源:{real_video_url}")
+
+                            try:
+                                c.execute("SELECT id FROM episode WHERE anime_id=? AND title=? AND play_url=? AND line_id=?",
+                                          (anime_id, ep_title2, play_url2, ul_id))
+                                if not c.fetchone():
+                                    c.execute(
+                                        "INSERT INTO episode (anime_id, title, play_url, video_src, real_video_url, line_id) VALUES (?, ?, ?, ?, ?, ?)",
+                                        (anime_id, ep_title2, play_url2, real_video_url, real_video_url, ul_id)
+                                    )
+                                    conn.commit()
+                            except Exception as db_e:
+                                print(f"插入episode表出错: {db_e}，anime_id={anime_id}, title={ep_title2}, play_url={play_url2}, line_id={ul_id}")
+                        except Exception as e:
+                            print(f"采集失败: {tab_info['name']} {ep_title2} {play_url2}，原因: {e}")
+                            try:
+                                driver.switch_to.default_content()
+                            except Exception:
+                                pass
+                            continue  # 只跳过当前分集
+
+                        # 判断是否为最后一个线路的最后一集
+                        if tab_idx == len(tab_info_list) - 1 and ep_idx2 == len(ep_list) - 1:
+                            print("本动漫所有线路和分集采集完毕，返回列表页采集下一个动漫")
+                            break  # 跳出分集循环
+                    else:
+                        continue  # 不是最后一集，继续分集循环
+                    break  # 跳出线路循环
+                else:
+                    continue  # 不是最后一个线路，继续线路循环
+                break  # 跳出ep_links循环
+            # 进入下一个li（动漫）
         time.sleep(2)
 finally:
     try:
