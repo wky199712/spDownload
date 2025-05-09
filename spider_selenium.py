@@ -7,7 +7,7 @@ from selenium.webdriver.support import expected_conditions as EC
 from bs4 import BeautifulSoup
 import time
 import sqlite3
-from urllib.parse import urljoin
+from urllib.parse import urljoin, unquote, urlparse, parse_qs
 import traceback
 
 # 1. 用 requests 获取 PHPSESSID
@@ -216,6 +216,25 @@ try:
                             real_video_url = driver.execute_script(
                                 "return document.querySelector('video') && document.querySelector('video').currentSrc;"
                             )
+                            print("调试：video标签采集到：", real_video_url)
+                            # 只有video标签为blob时，才去采集第二层iframe的src
+                            if real_video_url and real_video_url.startswith("blob:"):
+                                try:
+                                    driver.switch_to.default_content()
+                                    driver.switch_to.frame(iframe_elem)
+                                    inner_iframe_elem = driver.find_element(By.TAG_NAME, "iframe")
+                                    inner_src = inner_iframe_elem.get_attribute("src")
+                                    print("调试：第二层iframe src =", inner_src)
+                                    if inner_src:
+                                        real_video_url = unquote(inner_src)
+                                        # 新增：如果是aliplayer.php?url=xxx，提取url参数
+                                        if "aliplayer.php?url=" in real_video_url:
+                                            qs = parse_qs(urlparse(real_video_url).query)
+                                            m3u8_url = qs.get("url", [""])[0]
+                                            if m3u8_url:
+                                                real_video_url = unquote(m3u8_url)
+                                except Exception:
+                                    pass
                             driver.switch_to.default_content()
                             print(f"分集:{ep_title2} 线路:{tab_info['name']}({ul_id}) 链接:{play_url2} 视频源:{real_video_url}")
 
