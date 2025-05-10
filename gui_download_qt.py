@@ -24,6 +24,14 @@ import json
 import requests
 from bs4 import BeautifulSoup
 
+# 在文件顶部添加
+try:
+    from mpv import MPV
+    from PyQt5.QtWidgets import QOpenGLWidget
+    MPV_AVAILABLE = True
+except ImportError:
+    MPV_AVAILABLE = False
+
 # 创建下载文件夹
 if not os.path.exists("download"):
     os.makedirs("download")
@@ -185,114 +193,620 @@ class BiliDownloader(QWidget):
         self.tab_widget.addTab(self.downloader_widget, "B站下载器")
 
     def init_anime_zone_ui(self, parent):
+        from PyQt5.QtWidgets import QGridLayout, QToolButton, QScrollArea, QWidget, QHBoxLayout, QVBoxLayout, QLabel, QPushButton, QDialog, QListWidget, QSizePolicy, QComboBox, QSpacerItem
+        from PyQt5.QtCore import Qt, QSize, QTimer
+        from PyQt5.QtGui import QMovie
+
         layout = QVBoxLayout(parent)
-        # 搜索框
         search_box = QLineEdit()
         search_box.setPlaceholderText("输入动漫名称搜索…")
         layout.addWidget(search_box)
 
-        # 动漫列表
-        anime_list = QListWidget()
-        anime_list.setIconSize(QSize(120, 68))
-        layout.addWidget(anime_list, stretch=1)
+        # 改为标题
+        title_label = QLabel("动漫资源")
+        title_label.setAlignment(Qt.AlignCenter)
+        title_label.setStyleSheet("font-size:22px;font-weight:bold;color:#00a1d6;margin:12px;")
+        layout.addWidget(title_label)
 
-        def load_anime_list(keyword=""):
-            anime_list.clear()
-            base_url = "http://www.yhdm95.com"
-            if keyword:
-                url = f"{base_url}/search/{keyword}.html"
+        # 分页控件
+        page_bar = QHBoxLayout()
+        prev_btn = QPushButton("上一页")
+        next_btn = QPushButton("下一页")
+        page_info = QLabel("")  # 初始不显示
+        page_bar.addWidget(prev_btn)
+        page_bar.addWidget(page_info)
+        page_bar.addWidget(next_btn)
+        layout.addLayout(page_bar)
+
+        # 滚动区+网格
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        grid_container = QWidget()
+        grid = QGridLayout(grid_container)
+        grid.setSpacing(18)
+
+        for i in range(5):  # 假设每行5个
+            grid.setColumnStretch(i, 1)
+        scroll.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        grid_container.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+
+        scroll.setWidget(grid_container)
+        layout.addWidget(scroll, stretch=1)
+
+        # 加载动画
+        loading_label = QLabel()
+        loading_label.setAlignment(Qt.AlignCenter)
+        loading_movie = QMovie("loading.gif")  # 你需要准备一个 loading.gif 动画文件
+        loading_label.setMovie(loading_movie)
+        loading_label.setVisible(False)
+        layout.addWidget(loading_label, alignment=Qt.AlignCenter)
+
+        self._db_anime_data = []
+        self._db_page = 1
+        self._db_page_size = 20
+        self._db_search_keyword = ""
+
+        def truncate_name(name, maxlen=10):
+            return name if len(name) <= maxlen else name[:maxlen] + "..."
+
+        def show_loading(show=True):
+            scroll.setVisible(not show)
+            loading_label.setVisible(show)
+            if show:
+                loading_movie.start()
             else:
-                url = base_url + "/"
-            self._anime_data = []
-            for attempt in range(3):
+                loading_movie.stop()
+        def load_db_anime_list(page=1, keyword=None):
+            show_loading(True)
+            if keyword is not None:
+                self._db_search_keyword = keyword.strip()
+            keyword = self._db_search_keyword
+            def do_load():
+                import sqlite3
+                conn = sqlite3.connect("anime.db")
+                c = conn.cursor()
+                if keyword:
+                    c.execute("SELECT COUNT(*) FROM anime WHERE name LIKE ?", (f"%{keyword}%",))
+                else:
+                    c.execute("SELECT COUNT(*) FROM anime")
+                total = c.fetchone()[0]
+                total_page = max(1, (total + self._db_page_size - 1) // self._db_page_size)
+                page2 = max(1, min(page, total_page))
+                self._db_page = page2
+                self._db_total_page = total_page
+                offset = (page2 - 1) * self._db_page_size
+                if keyword:
+                    c.execute("SELECT id, name, cover FROM anime WHERE name LIKE ? ORDER BY id DESC LIMIT ? OFFSET ?", (f"%{keyword}%", self._db_page_size, offset))
+                else:
+                    c.execute("SELECT id, name, cover FROM anime ORDER BY id DESC LIMIT ? OFFSET ?", (self._db_page_size, offset))
+                self._db_anime_data = c.fetchall()
+                conn.close()
+
+                def update_ui():
+                    # 清空网格
+                    for i in reversed(range(grid.count())):
+                        w = grid.itemAt(i).widget()
+                        if w:
+                            w.setParent(None)
+                    # 填充网格
+                    for idx, (anime_id, name, cover_url) in enumerate(self._db_anime_data):
+                        btn = QToolButton()
+                        btn.setToolButtonStyle(Qt.ToolButtonTextUnderIcon)
+                        btn.setMinimumSize(120, 150)  # 最小尺寸
+                        btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+                        # btn.setIconSize(QSize(180, 120))  # 图标也可适当变大
+                        btn.setText(truncate_name(name, 10))
+                        btn.setToolTip(name)
+                        btn.setStyleSheet("""
+                            QToolButton {
+                                border: none;
+                                padding: 6px;
+                                font-size: 16px;
+                                qproperty-iconSize: 120px 90px;
+                            }
+                            QToolButton::menu-indicator { image: none; }
+                        """)
+                        # 加载图片
+                        if cover_url:
+                            try:
+                                img_data = urlopen(cover_url).read()
+                                pixmap = QPixmap()
+                                pixmap.loadFromData(img_data)
+                                btn._raw_pixmap = pixmap  # 保存原图
+                            except Exception:
+                                btn._raw_pixmap = QPixmap("icon.ico")
+                        else:
+                            btn._raw_pixmap = QPixmap("icon.ico")
+
+                        # 动态调整图片和字体
+                        def resizeEvent(event, btn=btn):
+                            w, h = btn.width(), btn.height()
+                            # 让图片最大贴合按钮上半部分，留10%边距
+                            icon_w = int(w * 0.85)
+                            icon_h = int(h * 0.55)
+                            if hasattr(btn, "_raw_pixmap"):
+                                btn.setIcon(QIcon(btn._raw_pixmap.scaled(icon_w, icon_h, Qt.KeepAspectRatio, Qt.SmoothTransformation)))
+                                btn.setIconSize(QSize(icon_w, icon_h))
+                            # 字体大小随高度变化
+                            font = btn.font()
+                            font.setPointSize(max(10, int(h * 0.11)))
+                            btn.setFont(font)
+                            QToolButton.resizeEvent(btn, event)
+                        btn.resizeEvent = resizeEvent
+
+                        btn.clicked.connect(lambda _, idx=idx: self.show_anime_detail(idx))
+                        grid.addWidget(btn, idx // 5, idx % 5)
+                    # 页码只在加载完后显示
+                    page_info.setText(f"第 {self._db_page} / {self._db_total_page} 页")
+                    show_loading(False)
+
+                QTimer.singleShot(100, update_ui)  # 让动画至少显示一帧
+
+            QTimer.singleShot(100, do_load)  # 模拟异步加载
+        def on_search():
+            load_db_anime_list(1, search_box.text())
+
+        search_box.returnPressed.connect(on_search)
+        search_box.textChanged.connect(lambda: load_db_anime_list(1, search_box.text()) if not search_box.text().strip() else None)
+
+        def prev_page():
+            if self._db_page > 1:
+                load_db_anime_list(self._db_page - 1)
+        def next_page():
+            if hasattr(self, "_db_total_page") and self._db_page < self._db_total_page:
+                load_db_anime_list(self._db_page + 1)
+        prev_btn.clicked.connect(prev_page)
+        next_btn.clicked.connect(next_page)
+
+        # 启动时自动加载第一页
+        load_db_anime_list(1)
+
+    def show_anime_detail(self,idx):
+        from PyQt5.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QScrollArea, QPushButton, QLabel, QWidget, QComboBox, QSizePolicy
+        from PyQt5.QtCore import Qt
+        from PyQt5.QtGui import QPixmap, QIcon
+        anime_id, name, cover_url = self._db_anime_data[idx]
+        import sqlite3
+        conn = sqlite3.connect("anime.db")
+        c = conn.cursor()
+        c.execute("SELECT intro, year, area, type, total_eps FROM anime WHERE id=?", (anime_id,))
+        row = c.fetchone()
+        intro, year, area, type_str, total_eps = row if row else ("", "", "", "", "")
+        c.execute("SELECT DISTINCT line_id FROM episode WHERE anime_id=? ORDER BY line_id", (anime_id,))
+        lines = [r[0] for r in c.fetchall()]
+        line_names = []
+        for lid in lines:
+            c.execute("SELECT title FROM episode WHERE anime_id=? AND line_id=? LIMIT 1", (anime_id, lid))
+            t = c.fetchone()
+            line_names.append(lid if not t else f"{lid}")
+        current_line = lines[0] if lines else None
+        c.execute("SELECT title, play_url, real_video_url FROM episode WHERE anime_id=? AND line_id=? ORDER BY id", (anime_id, current_line))
+        eps = c.fetchall()
+        conn.close()
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle(name)
+        dialog.setMinimumSize(1000, 800)
+        dialog.setWindowFlags(Qt.Window | Qt.WindowMinMaxButtonsHint | Qt.WindowCloseButtonHint)
+        main_layout = QVBoxLayout(dialog)
+
+        # 1. 播放器区
+        if MPV_AVAILABLE:
+            class MpvWidget(QOpenGLWidget):
+                clicked = pyqtSignal()
+                def __init__(self, parent=None):
+                    super().__init__(parent)
+                    # 先初始化所有回调属性，防止mpv事件早于这些属性定义
+                    self.on_time_update = None
+                    self.on_duration_update = None
+                    self.on_pause_update = None
+                    self.on_volume_update = None
+
+                    self.setMinimumSize(800, 450)
+                    self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+                    self.mpv = MPV(wid=str(int(self.winId())), log_handler=None, input_default_bindings=True, input_vo_keyboard=True)
+                    self.duration = 0
+                    self._slider_updating = False
+                    self.mpv.observe_property('duration', self._on_duration)
+                    self.mpv.observe_property('time-pos', self._on_timepos)
+                    self.mpv.observe_property('pause', self._on_pause)
+                    self.mpv.observe_property('volume', self._on_volume)
+                    self.on_time_update = None
+                    self.on_duration_update = None
+                    self.on_pause_update = None
+                    self.on_volume_update = None
+
+                def play(self, url):
+                    self.mpv.play(url)
+
+                def set_position(self, sec):
+                    self.mpv.seek(sec, reference='absolute')
+
+                def set_pause(self, pause):
+                    self.mpv.pause = pause
+
+                def set_volume(self, vol):
+                    self.mpv.volume = vol
+
+                def _on_duration(self, name, value):
+                    self.duration = value or 0
+                    if self.on_duration_update:
+                        self.on_duration_update(self.duration)
+
+                def _on_timepos(self, name, value):
+                    if self.on_time_update:
+                        self.on_time_update(value or 0)
+
+                def _on_pause(self, name, value):
+                    if self.on_pause_update:
+                        self.on_pause_update(value)
+
+                def _on_volume(self, name, value):
+                    if self.on_volume_update:
+                        self.on_volume_update(value)
+
+                def mousePressEvent(self, event):
+                    if event.button() == Qt.LeftButton:
+                        self.clicked.emit()
+                    super().mousePressEvent(event)
+                # 监听全屏窗口关闭，自动恢复弹窗
+                def video_close_event(event):
+                    if is_fullscreen[0]:
+                        toggle_fullscreen()
+                    event.accept()
+                    video_widget.closeEvent = video_close_event
+                pass
+            video_widget = MpvWidget(dialog)
+        else:
+            video_widget = QLabel("未安装 python-mpv，无法播放流媒体")
+            video_widget.setMinimumSize(480, 270)
+        video_widget.setMinimumHeight(420)
+        video_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        main_layout.addWidget(video_widget, stretch=3)
+        # 在 video_widget 上覆盖一个 QLabel 作为加载提示
+        loading_label = QLabel("加载中...", video_widget)
+        loading_label.setStyleSheet("""
+            QLabel {
+                background: rgba(0,0,0,160);
+                color: #fff;
+                font-size: 32px;
+                border-radius: 16px;
+            }
+        """)
+        loading_label.setAlignment(Qt.AlignCenter)
+        loading_label.setGeometry(0, 0, video_widget.width(), video_widget.height())
+        loading_label.hide()
+
+        # 保证遮罩随播放器大小变化
+        def resize_loading_label(event):
+            loading_label.setGeometry(0, 0, video_widget.width(), video_widget.height())
+            QOpenGLWidget.resizeEvent(video_widget, event)
+        video_widget.resizeEvent = resize_loading_label
+        def hide_loading_on_play(pos):
+            # 只要有播放进度就说明开始播放了
+            if pos and loading_label.isVisible():
+                loading_label.hide()
+        video_widget.on_time_update = hide_loading_on_play
+        # 进度条
+        slider = QSlider(Qt.Horizontal)
+        slider.setRange(0, 1000)
+        slider.setValue(0)
+        slider.setEnabled(False)
+        main_layout.addWidget(slider)
+
+        # 时间标签
+        time_label = QLabel("00:00 / 00:00")
+        main_layout.addWidget(time_label)
+
+        # 控制区
+        ctrl_layout = QHBoxLayout()
+        play_btn = QPushButton("暂停" if MPV_AVAILABLE else "无")
+        min_btn = QPushButton("最小化")
+        vol_slider = QSlider(Qt.Horizontal)
+        vol_slider.setRange(0, 100)
+        vol_slider.setValue(80)
+        vol_slider.setFixedWidth(100)
+        vol_label = QLabel("音量")
+        max_btn = QPushButton("窗口最大化")
+        fullscreen_btn = QPushButton("全屏")
+        ctrl_layout.addWidget(play_btn)
+        ctrl_layout.addWidget(min_btn)
+        ctrl_layout.addWidget(vol_label)
+        ctrl_layout.addWidget(vol_slider)
+        ctrl_layout.addWidget(max_btn)
+        ctrl_layout.addWidget(fullscreen_btn)
+        main_layout.addLayout(ctrl_layout)
+
+        min_btn.clicked.connect(dialog.showMinimized)
+
+        # 2. 分集按钮区
+        ep_scroll = QScrollArea()
+        ep_scroll.setWidgetResizable(True)
+        ep_scroll.setFixedHeight(60)
+        ep_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        ep_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        ep_btn_container = QWidget()
+        ep_btn_layout = QHBoxLayout(ep_btn_container)
+        ep_btn_layout.setContentsMargins(8, 0, 8, 0)
+        ep_btn_layout.setSpacing(12)
+        ep_btns = []
+        for i, (ep_title, play_url, real_url) in enumerate(eps):
+            btn = QPushButton(ep_title)
+            btn.setCheckable(True)
+            btn.setMinimumWidth(60)
+            btn.setStyleSheet("""
+                QPushButton {
+                    background: #f6f7f9;
+                    border: 2px solid #00a1d6;
+                    border-radius: 8px;
+                    padding: 8px 18px;
+                    color: #222;
+                    font-size: 18px;
+                }
+                QPushButton:checked {
+                    background: #00a1d6;
+                    color: #fff;
+                    border: 2px solid #fb7299;
+                }
+            """)
+            ep_btn_layout.addWidget(btn)
+            ep_btns.append(btn)
+        ep_btn_layout.addStretch(1)
+        ep_btn_container.setLayout(ep_btn_layout)
+        ep_scroll.setWidget(ep_btn_container)
+        main_layout.addWidget(ep_scroll, stretch=0)
+
+        # 默认播放最老一集
+        cur_ep_idx = len(eps) - 1 if eps else 0
+        if eps and MPV_AVAILABLE:
+            video_widget.play(eps[cur_ep_idx][2])
+            ep_btns[cur_ep_idx].setChecked(True)
+        def on_ep_btn_clicked(idx):
+            for i, b in enumerate(ep_btns):
+                b.setChecked(i == idx)
+            if MPV_AVAILABLE:
+                loading_label.show()
+                video_widget.play(eps[idx][2])
+        for idx, btn in enumerate(ep_btns):
+            btn.clicked.connect(lambda _, idx=idx: on_ep_btn_clicked(idx))
+        # 3. 信息区
+        info_layout = QHBoxLayout()
+        # 封面
+        cover_label = QLabel()
+        cover_label.setFixedSize(220, 160)
+        if cover_url:
+            try:
+                img_data = urlopen(cover_url).read()
+                pixmap = QPixmap()
+                pixmap.loadFromData(img_data)
+                pixmap = pixmap.scaled(220, 160, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                cover_label.setPixmap(pixmap)
+            except Exception:
+                pass
+        info_layout.addWidget(cover_label)
+
+        # 信息右侧
+        info_right = QVBoxLayout()
+        name_label = QLabel(f"<b>{name}</b>")
+        name_label.setStyleSheet("font-size: 22px;")
+        info_right.addWidget(name_label)
+
+        # 简介区（可滚动但不显示滚动条）
+        intro_scroll = QScrollArea()
+        intro_scroll.setWidgetResizable(True)
+        intro_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        intro_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        intro_widget = QLabel(f"简介：{intro}")
+        intro_widget.setWordWrap(True)
+        intro_widget.setStyleSheet("font-size: 18px;")
+        intro_scroll.setWidget(intro_widget)
+        intro_scroll.setFixedHeight(80)
+        intro_scroll.setStyleSheet("""
+            QScrollArea { border: none; background: transparent; }
+            QScrollBar:vertical, QScrollBar:horizontal { width:0px; height:0px; }
+        """)
+        info_right.addWidget(intro_scroll)
+
+        # 其他信息
+        info_right.addWidget(QLabel(f"<span style='font-size:16px;'>年份：{year}</span>"))
+        info_right.addWidget(QLabel(f"<span style='font-size:16px;'>地区：{area}</span>"))
+        info_right.addWidget(QLabel(f"<span style='font-size:16px;'>类型：{type_str}</span>"))
+        info_right.addWidget(QLabel(f"<span style='font-size:16px;'>总集数：{total_eps}</span>"))
+        line_box = QComboBox()
+        line_box.addItems(line_names)
+        line_box.setStyleSheet("font-size:16px;")
+        info_right.addWidget(QLabel("<span style='font-size:16px;'>线路切换</span>"))
+        info_right.addWidget(line_box)
+        info_right.addStretch()
+        info_layout.addLayout(info_right)
+
+
+        # 用QWidget包裹信息区，方便隐藏/显示
+        info_widget = QWidget()
+        info_widget.setLayout(info_layout)
+        main_layout.addWidget(info_widget, stretch=1)
+        # 事件绑定
+        if MPV_AVAILABLE:
+            is_player_maximized = [False]  # 用列表包裹以便闭包修改
+
+            def toggle_fullscreen():
+                if not is_fullscreen[0]:
+                    dialog.showMaximized()
+                    info_widget.setVisible(False)
+                    is_fullscreen[0] = True
+                else:
+                    dialog.showNormal()
+                    info_widget.setVisible(True)
+                    is_fullscreen[0] = False
+
+            fullscreen_btn.clicked.connect(toggle_fullscreen)
+
+            def keyPressEvent(event):
+                if is_fullscreen[0] and event.key() == Qt.Key_Escape:
+                    toggle_fullscreen()
+                else:
+                    super(type(video_widget), video_widget).keyPressEvent(event)
+            video_widget.keyPressEvent = keyPressEvent
+
+            video_widget.setFocusPolicy(Qt.StrongFocus)
+
+            # 播放/暂停
+            def toggle_pause():
+                video_widget.set_pause(not video_widget.mpv.pause)
+            def update_pause_btn(paused):
+                play_btn.setText("播放" if paused else "暂停")
+            play_btn.clicked.connect(toggle_pause)
+            video_widget.on_pause_update = update_pause_btn
+
+            # 点击播放器区域也可暂停/播放
+            video_widget.clicked.connect(toggle_pause)
+
+            # 音量
+            def set_volume(val):
+                video_widget.set_volume(val)
+            vol_slider.valueChanged.connect(set_volume)
+
+            # 进度条
+            def update_slider(pos):
+                if not slider.isSliderDown() and video_widget.duration:
+                    slider.setValue(int((pos / video_widget.duration) * 1000))
+                # 更新时间标签
+                cur = int(pos or 0)
+                dur = int(video_widget.duration or 0)
+                time_label.setText(f"{cur//60:02d}:{cur%60:02d} / {dur//60:02d}:{dur%60:02d}")
+            video_widget.on_time_update = update_slider
+
+            def update_duration(dur):
+                if dur:
+                    slider.setEnabled(True)
+            video_widget.on_duration_update = update_duration
+
+            def slider_released():
+                if video_widget.duration:
+                    sec = slider.value() / 1000 * video_widget.duration
+                    video_widget.set_position(sec)
+            slider.sliderReleased.connect(slider_released)
+
+            # 线路切换
+            def change_line(idx):
+                    lid = lines[idx]
+                    import sqlite3
+                    conn = sqlite3.connect("anime.db")
+                    c = conn.cursor()
+                    c.execute("SELECT title, play_url, real_video_url FROM episode WHERE anime_id=? AND line_id=? ORDER BY id", (anime_id, lid))
+                    eps2 = c.fetchall()
+                    conn.close()
+                    # 清空原有按钮
+                    for btn in ep_btns:
+                        btn.setParent(None)
+                    ep_btns.clear()
+                    # 重新生成按钮
+                    for i, (ep_title, play_url, real_url) in enumerate(eps2):
+                        btn = QPushButton(ep_title)
+                        btn.setCheckable(True)
+                        btn.setMinimumWidth(60)
+                        btn.setStyleSheet("""
+                            QPushButton {
+                                background: #f6f7f9;
+                                border: 2px solid #00a1d6;
+                                border-radius: 8px;
+                                padding: 8px 18px;
+                                color: #222;
+                                font-size: 18px;
+                            }
+                            QPushButton:checked {
+                                background: #00a1d6;
+                                color: #fff;
+                                border: 2px solid #fb7299;
+                            }
+                        """)
+                        ep_btn_layout.insertWidget(ep_btn_layout.count() - 1, btn)
+                        ep_btns.append(btn)
+                        btn.clicked.connect(lambda _, idx=i: on_ep_btn_clicked(idx))
+                    # 默认播放最老一集
+                    if eps2:
+                        video_widget.play(eps2[-1][2])
+                        ep_btns[-1].setChecked(True)
+            line_box.currentIndexChanged.connect(change_line)
+
+            # 初始化音量
+            video_widget.set_volume(vol_slider.value())
+
+            # 关闭弹窗时销毁mpv，防止主程序卡死
+            def on_close(_):
                 try:
-                    resp = requests.get(url, timeout=15)
-                    resp.encoding = "utf-8"
-                    soup = BeautifulSoup(resp.text, "html.parser")
-                    items = soup.select(".lpic li a")
-                    if not items:
-                        QMessageBox.warning(self, "提示", "未获取到动漫数据，请检查网络或站点结构！")
-                    for a in items:
-                        title = a.get("title") or a.text.strip()
-                        href = a.get("href")
-                        img_tag = a.find("img")
-                        cover_url = img_tag["src"] if img_tag and img_tag.has_attr("src") else ""
-                        if href and title:
-                            self._anime_data.append({"title": title, "url": base_url + href, "cover": cover_url})
-                            item = QListWidgetItem(title)
-                            if cover_url:
-                                try:
-                                    img_data = urlopen(cover_url).read()
-                                    pixmap = QPixmap()
-                                    pixmap.loadFromData(img_data)
-                                    pixmap = pixmap.scaled(120, 68, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-                                    item.setIcon(QIcon(pixmap))
-                                except Exception:
-                                    pass
-                            anime_list.addItem(item)
-                    return
-                except Exception as e:
-                    if attempt == 2:
-                        QMessageBox.warning(self, "提示", f"动漫资源加载失败：{e}")
-                    else:
-                        time.sleep(2)
+                    video_widget.mpv.terminate()
+                except Exception:
+                    pass
+            dialog.finished.connect(on_close)
 
-        load_anime_list()
+            is_fullscreen = [False]
 
-        def search():
-            keyword = search_box.text().strip()
-            load_anime_list(keyword)
-        search_box.returnPressed.connect(search)
+            def toggle_fullscreen():
+                if not is_fullscreen[0]:
+                    # 伪全屏：最大化弹窗，隐藏右侧信息区
+                    dialog.showMaximized()
+                    for i in reversed(range(main_layout.count())):
+                        item = main_layout.itemAt(i)
+                        if item is not None and item.layout() == right:
+                            main_layout.takeAt(i)
+                    main_layout.setStretch(0, 1)
+                    # 控制条悬浮美化
+                    ctrl_widget = QWidget()
+                    ctrl_widget.setLayout(ctrl_layout)
+                    ctrl_widget.setStyleSheet("""
+                        QWidget {
+                            background: rgba(30,30,30,160);
+                            border-radius: 16px;
+                        }
+                        QPushButton {
+                            background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #00a1d6, stop:1 #7f53ac);
+                            color: #fff;
+                            border: none;
+                            border-radius: 12px;
+                            padding: 6px 18px;
+                            font-size: 16px;
+                        }
+                        QPushButton:hover {
+                            background: #fb7299;
+                        }
+                        QSlider::groove:horizontal {
+                            height: 8px;
+                            border-radius: 4px;
+                            background: #444;
+                        }
+                        QSlider::handle:horizontal {
+                            background: #00a1d6;
+                            border-radius: 8px;
+                            width: 18px;
+                            margin: -5px 0;
+                        }
+                        QSlider::sub-page:horizontal {
+                            background: #00a1d6;
+                            border-radius: 4px;
+                        }
+                    """)
+                    # 用widget包裹后替换原来的ctrl_layout
+                    left.removeItem(ctrl_layout)
+                    left.addWidget(ctrl_widget)
+                    is_fullscreen.append(ctrl_widget)
+                    is_fullscreen[0] = True
+                else:
+                    # 恢复
+                    dialog.showNormal()
+                    main_layout.setStretch(0, 2)
+                    main_layout.setStretch(1, 1)
+                    # 恢复控制条
+                    if len(is_fullscreen) > 1:
+                        ctrl_widget = is_fullscreen.pop()
+                        left.removeWidget(ctrl_widget)
+                        ctrl_widget.setParent(None)
+                        left.addLayout(ctrl_layout)
+                    is_fullscreen[0] = False
 
-        # 选中动漫后爬取播放页并在线播放（弹窗）
-        def play_selected():
-            row = anime_list.currentRow()
-            if row >= 0:
-                anime = self._anime_data[row]
-                try:
-                    resp = requests.get(anime["url"], timeout=10)
-                    resp.encoding = "utf-8"
-                    soup = BeautifulSoup(resp.text, "html.parser")
-                    ep_list = soup.select(".movurl a")
-                    if not ep_list:
-                        QMessageBox.warning(self, "提示", "未找到分集信息")
-                        return
-                    ep_dialog = QDialog(self)
-                    ep_dialog.setWindowTitle(anime["title"])
-                    ep_layout = QVBoxLayout(ep_dialog)
-                    ep_list_widget = QListWidget()
-                    ep_urls = []
-                    for a in ep_list:
-                        ep_title = a.text.strip()
-                        ep_href = a.get("href")
-                        if ep_href:
-                            ep_urls.append("http://www.yhdm95.com" + ep_href)
-                            ep_list_widget.addItem(ep_title)
-                    ep_layout.addWidget(ep_list_widget)
-                    video_widget = QVideoWidget()
-                    ep_layout.addWidget(video_widget)
-                    player = QMediaPlayer(ep_dialog)
-                    player.setVideoOutput(video_widget)
-                    def play_episode():
-                        ep_row = ep_list_widget.currentRow()
-                        if ep_row >= 0:
-                            ep_url = ep_urls[ep_row]
-                            ep_resp = requests.get(ep_url, timeout=10)
-                            ep_resp.encoding = "utf-8"
-                            ep_soup = BeautifulSoup(ep_resp.text, "html.parser")
-                            iframe = ep_soup.find("iframe")
-                            if iframe and iframe.get("src"):
-                                play_url = iframe["src"]
-                                if not play_url.startswith("http"):
-                                    play_url = "http://www.yhdm95.com" + play_url
-                                player.setMedia(QMediaContent(QUrl(play_url)))
-                                player.play()
-                    ep_list_widget.itemDoubleClicked.connect(play_episode)
-                    ep_dialog.exec_()
-                except Exception as e:
-                    QMessageBox.warning(self, "提示", f"播放页解析失败：{e}")
+            fullscreen_btn.clicked.connect(toggle_fullscreen)
 
-        anime_list.itemDoubleClicked.connect(play_selected)
+        dialog.exec_()
 
     def init_downloader_ui(self, widget):
         layout = QVBoxLayout(widget)
@@ -627,7 +1141,7 @@ class BiliDownloader(QWidget):
 
     def event(self, event):
         # 监听窗口激活事件
-        if event.type() == QEvent.WindowActivate:
+        if (event.type() == QEvent.WindowActivate):
             if self._wasActive:
                 # 如果已经激活，再次激活说明是任务栏点击
                 if self.isMinimized():

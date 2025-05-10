@@ -151,6 +151,13 @@ try:
             if not first_ul:
                 print("未找到分集ul，跳过")
                 continue
+
+            # 新增：判断集数
+            li_count = len(first_ul.find_all("li"))
+            if li_count > 100:
+                print(f"分集数过多（{li_count}），跳过该视频：{name}")
+                continue
+
             ep_links = []
             for ep_a in first_ul.find_all("a"):
                 ep_href = ep_a.get("href")
