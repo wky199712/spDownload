@@ -376,9 +376,15 @@ class BiliDownloader(QWidget):
         lines = [r[0] for r in c.fetchall()]
         line_names = []
         for lid in lines:
-            c.execute("SELECT title FROM episode WHERE anime_id=? AND line_id=? LIMIT 1", (anime_id, lid))
-            t = c.fetchone()
-            line_names.append(lid if not t else f"{lid}")
+        # 新增：自动编号显示为“线路1”“线路2”...
+            if str(lid).startswith("ul_playlist_"):
+                try:
+                    num = int(str(lid).replace("ul_playlist_", ""))
+                    line_names.append(f"线路{num}")
+                except Exception:
+                    line_names.append(str(lid))
+            else:
+                line_names.append(str(lid))
         current_line = lines[0] if lines else None
         c.execute("SELECT title, play_url, real_video_url FROM episode WHERE anime_id=? AND line_id=? ORDER BY id", (anime_id, current_line))
         eps = c.fetchall()
