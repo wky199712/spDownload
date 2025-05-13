@@ -23,6 +23,16 @@ from concurrent.futures import ThreadPoolExecutor
 import json
 import requests
 from bs4 import BeautifulSoup
+import logging
+from dataclasses import dataclass
+from typing import Optional
+
+@dataclass
+class VideoState:
+    """视频状态记录"""
+    last_position: float = 0
+    last_url: Optional[str] = None
+    is_fullscreen: bool = False
 
 # 在文件顶部添加
 try:
@@ -196,6 +206,15 @@ class BiliDownloader(QWidget):
         from PyQt5.QtWidgets import QGridLayout, QToolButton, QScrollArea, QWidget, QHBoxLayout, QVBoxLayout, QLabel, QPushButton, QDialog, QListWidget, QSizePolicy, QComboBox, QSpacerItem
         from PyQt5.QtCore import Qt, QSize, QTimer
         from PyQt5.QtGui import QMovie
+        # 在 import QScrollArea 之后添加
+        class MyScrollArea(QScrollArea):
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                self.loading_label = None
+            def resizeEvent(self, event):
+                if self.loading_label:
+                    self.loading_label.setFixedHeight(self.height())
+                super().resizeEvent(event)
 
         layout = QVBoxLayout(parent)
         search_box = QLineEdit()
@@ -219,7 +238,7 @@ class BiliDownloader(QWidget):
         layout.addLayout(page_bar)
 
         # 滚动区+网格
-        scroll = QScrollArea()
+        scroll = MyScrollArea()
         scroll.setWidgetResizable(True)
         grid_container = QWidget()
         grid = QGridLayout(grid_container)
@@ -240,6 +259,9 @@ class BiliDownloader(QWidget):
         loading_label.setMovie(loading_movie)
         loading_label.setVisible(False)
         layout.addWidget(loading_label, alignment=Qt.AlignCenter)
+        scroll.loading_label = loading_label  # 关键：让scroll能访问到loading_label
+
+        loading_label.setFixedHeight(scroll.height())
 
         self._db_anime_data = []
         self._db_page = 1
@@ -361,10 +383,11 @@ class BiliDownloader(QWidget):
         # 启动时自动加载第一页
         load_db_anime_list(1)
 
-    def show_anime_detail(self,idx):
-        from PyQt5.QtWidgets import QDialog, QVBoxLayout, QHBoxLayout, QScrollArea, QPushButton, QLabel, QWidget, QComboBox, QSizePolicy
-        from PyQt5.QtCore import Qt
+    def show_anime_detail(self, idx):
+        from PyQt5.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QScrollArea, QPushButton, QLabel, QComboBox, QSizePolicy
+        from PyQt5.QtCore import Qt, QTimer
         from PyQt5.QtGui import QPixmap, QIcon
+        import os
         anime_id, name, cover_url = self._db_anime_data[idx]
         import sqlite3
         conn = sqlite3.connect("anime.db")
@@ -376,7 +399,6 @@ class BiliDownloader(QWidget):
         lines = [r[0] for r in c.fetchall()]
         line_names = []
         for lid in lines:
-        # 新增：自动编号显示为“线路1”“线路2”...
             if str(lid).startswith("ul_playlist_"):
                 try:
                     num = int(str(lid).replace("ul_playlist_", ""))
@@ -390,24 +412,31 @@ class BiliDownloader(QWidget):
         eps = c.fetchall()
         conn.close()
 
-        dialog = QDialog(self)
+        dialog = QWidget(None, Qt.Window)
         dialog.setWindowTitle(name)
         dialog.setMinimumSize(1000, 800)
-        dialog.setWindowFlags(Qt.Window | Qt.WindowMinMaxButtonsHint | Qt.WindowCloseButtonHint)
+        dialog.setStyleSheet(self.get_stylesheet())
         main_layout = QVBoxLayout(dialog)
+        main_layout.setContentsMargins(10, 10, 10, 10)
+        main_layout.setSpacing(10)
 
-        # 1. 播放器区
+        # 播放器+控制条区
+        video_area = QVBoxLayout()
+        video_area.setContentsMargins(0, 0, 0, 0)
+        video_area.setSpacing(0)
+
         if MPV_AVAILABLE:
+            import types
             class MpvWidget(QOpenGLWidget):
                 clicked = pyqtSignal()
                 def __init__(self, parent=None):
                     super().__init__(parent)
-                    # 先初始化所有回调属性，防止mpv事件早于这些属性定义
                     self.on_time_update = None
                     self.on_duration_update = None
                     self.on_pause_update = None
                     self.on_volume_update = None
-
+                    self.state = VideoState()
+                    self.logger = logging.getLogger(self.__class__.__name__)
                     self.setMinimumSize(800, 450)
                     self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
                     self.mpv = MPV(wid=str(int(self.winId())), log_handler=None, input_default_bindings=True, input_vo_keyboard=True)
@@ -417,13 +446,20 @@ class BiliDownloader(QWidget):
                     self.mpv.observe_property('time-pos', self._on_timepos)
                     self.mpv.observe_property('pause', self._on_pause)
                     self.mpv.observe_property('volume', self._on_volume)
-                    self.on_time_update = None
-                    self.on_duration_update = None
-                    self.on_pause_update = None
-                    self.on_volume_update = None
 
                 def play(self, url):
-                    self.mpv.play(url)
+                    try:
+                        if url != self.state.last_url:
+                            self.state.last_position = 0
+                        else:
+                            self.state.last_position = self.mpv.time_pos or 0
+                        self.state.last_url = url
+                        self.mpv.play(url)
+                        if self.state.last_position > 0:
+                            self.mpv.seek(self.state.last_position)
+                    except Exception as e:
+                        self.logger.error(f"播放失败: {e}")
+                        raise
 
                 def set_position(self, sec):
                     self.mpv.seek(sec, reference='absolute')
@@ -455,77 +491,117 @@ class BiliDownloader(QWidget):
                     if event.button() == Qt.LeftButton:
                         self.clicked.emit()
                     super().mousePressEvent(event)
-                # 监听全屏窗口关闭，自动恢复弹窗
-                def video_close_event(event):
-                    if is_fullscreen[0]:
-                        toggle_fullscreen()
-                    event.accept()
-                    video_widget.closeEvent = video_close_event
-                pass
+
+                def keyPressEvent(self, event):
+                    if event.key() == Qt.Key_Escape and self.state.is_fullscreen:
+                        self.parent().toggle_fullscreen()
+                    elif event.key() == Qt.Key_F:
+                        self.parent().toggle_fullscreen()
+                    elif event.key() == Qt.Key_Space:
+                        self.set_pause(not self.mpv.pause)
+                    elif event.key() == Qt.Key_Left:
+                        self.mpv.seek(-5, reference='relative')
+                    elif event.key() == Qt.Key_Right:
+                        self.mpv.seek(5, reference='relative')
+                    else:
+                        super().keyPressEvent(event)
+
+                def handle_fullscreen(self, is_fullscreen):
+                    try:
+                        if is_fullscreen:
+                            if not self.state.is_fullscreen:
+                                self._old_parent = self.parent()
+                                self._old_geometry = self.geometry()
+                                self._fullscreen_container = QWidget(None, Qt.Window)
+                                self._fullscreen_container.setWindowFlags(Qt.Window | Qt.FramelessWindowHint)
+                                layout = QVBoxLayout(self._fullscreen_container)
+                                layout.setContentsMargins(0, 0, 0, 0)
+                                layout.addWidget(self)
+                                self._fullscreen_container.showFullScreen()
+                                self.state.is_fullscreen = True
+                        else:
+                            if self.state.is_fullscreen and hasattr(self, '_fullscreen_container'):
+                                self.setParent(self._old_parent)
+                                self.setGeometry(self._old_geometry)
+                                self._fullscreen_container.close()
+                                self._fullscreen_container.deleteLater()
+                                delattr(self, '_fullscreen_container')
+                                self.show()
+                                self.state.is_fullscreen = False
+                        self.hide()
+                        self.show()
+                        self.update()
+                        try:
+                            self.mpv.command('set', 'wid', str(int(self.winId())))
+                        except Exception as e:
+                            self.logger.error(f"重新绑定MPV失败: {e}")
+                        QTimer.singleShot(100, self.update)
+                        QTimer.singleShot(200, self.update)
+                    except Exception as e:
+                        self.logger.error(f"全屏切换失败: {e}")
+                        raise
+                    QTimer.singleShot(100, self.update)
+
             video_widget = MpvWidget(dialog)
         else:
             video_widget = QLabel("未安装 python-mpv，无法播放流媒体")
             video_widget.setMinimumSize(480, 270)
         video_widget.setMinimumHeight(420)
         video_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        main_layout.addWidget(video_widget, stretch=3)
-        # 在 video_widget 上覆盖一个 QLabel 作为加载提示
-        loading_label = QLabel("加载中...", video_widget)
-        loading_label.setStyleSheet("""
-            QLabel {
-                background: rgba(0,0,0,160);
-                color: #fff;
-                font-size: 32px;
-                border-radius: 16px;
+        video_area.addWidget(video_widget)
+
+        # 控制条
+        control_bar = QWidget()
+        control_bar.setStyleSheet("""
+            QWidget {
+                background:rgba(30,30,30,180);
+                border-radius:10px;
             }
         """)
-        loading_label.setAlignment(Qt.AlignCenter)
-        loading_label.setGeometry(0, 0, video_widget.width(), video_widget.height())
-        loading_label.hide()
+        ctrl_layout = QHBoxLayout(control_bar)
+        ctrl_layout.setContentsMargins(12, 6, 12, 6)
+        ctrl_layout.setSpacing(10)
 
-        # 保证遮罩随播放器大小变化
-        def resize_loading_label(event):
-            loading_label.setGeometry(0, 0, video_widget.width(), video_widget.height())
-            QOpenGLWidget.resizeEvent(video_widget, event)
-        video_widget.resizeEvent = resize_loading_label
-        def hide_loading_on_play(pos):
-            # 只要有播放进度就说明开始播放了
-            if pos and loading_label.isVisible():
-                loading_label.hide()
-        video_widget.on_time_update = hide_loading_on_play
-        # 进度条
+        play_btn = QPushButton("⏸")
+        play_btn.setFixedSize(36, 36)
+        ctrl_layout.addWidget(play_btn)
+
         slider = QSlider(Qt.Horizontal)
         slider.setRange(0, 1000)
         slider.setValue(0)
-        slider.setEnabled(False)
-        main_layout.addWidget(slider)
+        slider.setFixedHeight(16)
+        slider.setMinimumWidth(200)
+        ctrl_layout.addWidget(slider, stretch=1)
 
-        # 时间标签
         time_label = QLabel("00:00 / 00:00")
-        main_layout.addWidget(time_label)
+        ctrl_layout.addWidget(time_label)
 
-        # 控制区
-        ctrl_layout = QHBoxLayout()
-        play_btn = QPushButton("暂停" if MPV_AVAILABLE else "无")
-        min_btn = QPushButton("最小化")
+        vol_icon = QLabel("🔊")
+        ctrl_layout.addWidget(vol_icon)
         vol_slider = QSlider(Qt.Horizontal)
         vol_slider.setRange(0, 100)
         vol_slider.setValue(80)
-        vol_slider.setFixedWidth(100)
-        vol_label = QLabel("音量")
-        max_btn = QPushButton("窗口最大化")
-        fullscreen_btn = QPushButton("全屏")
-        ctrl_layout.addWidget(play_btn)
-        ctrl_layout.addWidget(min_btn)
-        ctrl_layout.addWidget(vol_label)
+        vol_slider.setFixedWidth(80)
         ctrl_layout.addWidget(vol_slider)
-        ctrl_layout.addWidget(max_btn)
+
+        fullscreen_btn = QPushButton()
+        fullscreen_btn.setText("⛶")
+        fullscreen_btn.setFixedSize(36, 36)
+        fullscreen_btn.setStyleSheet("""
+            QPushButton {
+                font-size: 22px;
+                qproperty-iconSize: 28px 28px;
+                text-align: center;
+                padding: 0;
+            }
+        """)
         ctrl_layout.addWidget(fullscreen_btn)
-        main_layout.addLayout(ctrl_layout)
 
-        min_btn.clicked.connect(dialog.showMinimized)
+        control_bar.setMaximumHeight(48)
+        video_area.addWidget(control_bar)
+        main_layout.addLayout(video_area, stretch=3)
 
-        # 2. 分集按钮区
+        # 分集按钮区
         ep_scroll = QScrollArea()
         ep_scroll.setWidgetResizable(True)
         ep_scroll.setFixedHeight(60)
@@ -562,22 +638,8 @@ class BiliDownloader(QWidget):
         ep_scroll.setWidget(ep_btn_container)
         main_layout.addWidget(ep_scroll, stretch=0)
 
-        # 默认播放最老一集
-        cur_ep_idx = len(eps) - 1 if eps else 0
-        if eps and MPV_AVAILABLE:
-            video_widget.play(eps[cur_ep_idx][2])
-            ep_btns[cur_ep_idx].setChecked(True)
-        def on_ep_btn_clicked(idx):
-            for i, b in enumerate(ep_btns):
-                b.setChecked(i == idx)
-            if MPV_AVAILABLE:
-                loading_label.show()
-                video_widget.play(eps[idx][2])
-        for idx, btn in enumerate(ep_btns):
-            btn.clicked.connect(lambda _, idx=idx: on_ep_btn_clicked(idx))
-        # 3. 信息区
+        # 信息区
         info_layout = QHBoxLayout()
-        # 封面
         cover_label = QLabel()
         cover_label.setFixedSize(220, 160)
         if cover_url:
@@ -591,13 +653,11 @@ class BiliDownloader(QWidget):
                 pass
         info_layout.addWidget(cover_label)
 
-        # 信息右侧
         info_right = QVBoxLayout()
         name_label = QLabel(f"<b>{name}</b>")
         name_label.setStyleSheet("font-size: 22px;")
         info_right.addWidget(name_label)
 
-        # 简介区（可滚动但不显示滚动条）
         intro_scroll = QScrollArea()
         intro_scroll.setWidgetResizable(True)
         intro_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
@@ -612,8 +672,6 @@ class BiliDownloader(QWidget):
             QScrollBar:vertical, QScrollBar:horizontal { width:0px; height:0px; }
         """)
         info_right.addWidget(intro_scroll)
-
-        # 其他信息
         info_right.addWidget(QLabel(f"<span style='font-size:16px;'>年份：{year}</span>"))
         info_right.addWidget(QLabel(f"<span style='font-size:16px;'>地区：{area}</span>"))
         info_right.addWidget(QLabel(f"<span style='font-size:16px;'>类型：{type_str}</span>"))
@@ -625,46 +683,64 @@ class BiliDownloader(QWidget):
         info_right.addWidget(line_box)
         info_right.addStretch()
         info_layout.addLayout(info_right)
-
-
-        # 用QWidget包裹信息区，方便隐藏/显示
         info_widget = QWidget()
         info_widget.setLayout(info_layout)
         main_layout.addWidget(info_widget, stretch=1)
+
         # 事件绑定
         if MPV_AVAILABLE:
-            is_player_maximized = [False]  # 用列表包裹以便闭包修改
-
             def toggle_fullscreen():
-                if not is_fullscreen[0]:
-                    dialog.showMaximized()
-                    info_widget.setVisible(False)
-                    is_fullscreen[0] = True
-                else:
-                    dialog.showNormal()
-                    info_widget.setVisible(True)
-                    is_fullscreen[0] = False
+                try:
+                    video_widget.handle_fullscreen(not video_widget.state.is_fullscreen)
+                    if video_widget.state.is_fullscreen:
+                        control_bar.setParent(video_widget._fullscreen_container)
+                        # 重新布局，避免位置错乱
+                        layout = video_widget._fullscreen_container.layout()
+                        if layout is not None:
+                            layout.addWidget(control_bar)
+                        control_bar.show()
+                        control_bar.raise_()
+                        video_widget._fullscreen_container.activateWindow()
+                        video_widget.setFocus()
+                    else:
+                        # 恢复到原布局
+                        control_bar.setParent(video_area.parentWidget())
+                        video_area.addWidget(control_bar)
+                        control_bar.show()
+                        dialog.activateWindow()
+                        dialog.setFocus()
+                    QApplication.processEvents()
+                    QTimer.singleShot(150, lambda: video_widget.mpv.command('set', 'wid', str(int(video_widget.winId()))))
+                except Exception as e:
+                    QMessageBox.warning(dialog, "错误", f"全屏切换失败: {str(e)}")
 
             fullscreen_btn.clicked.connect(toggle_fullscreen)
 
-            def keyPressEvent(event):
-                if is_fullscreen[0] and event.key() == Qt.Key_Escape:
+            def keyPressEvent(self, event):
+                if event.key() == Qt.Key_Escape and video_widget.state.is_fullscreen:
                     toggle_fullscreen()
+                elif event.key() == Qt.Key_F:
+                    toggle_fullscreen()
+                elif event.key() == Qt.Key_Space:
+                    video_widget.set_pause(not video_widget.mpv.pause)
+                elif event.key() == Qt.Key_Left:
+                    video_widget.mpv.seek(-5, reference='relative')
+                elif event.key() == Qt.Key_Right:
+                    video_widget.mpv.seek(5, reference='relative')
                 else:
                     super(type(video_widget), video_widget).keyPressEvent(event)
+    
+            video_widget.keyPressEvent = types.MethodType(keyPressEvent, video_widget)
             video_widget.keyPressEvent = keyPressEvent
-
             video_widget.setFocusPolicy(Qt.StrongFocus)
 
             # 播放/暂停
             def toggle_pause():
                 video_widget.set_pause(not video_widget.mpv.pause)
             def update_pause_btn(paused):
-                play_btn.setText("播放" if paused else "暂停")
+                play_btn.setText("▶" if paused else "⏸")
             play_btn.clicked.connect(toggle_pause)
             video_widget.on_pause_update = update_pause_btn
-
-            # 点击播放器区域也可暂停/播放
             video_widget.clicked.connect(toggle_pause)
 
             # 音量
@@ -676,7 +752,6 @@ class BiliDownloader(QWidget):
             def update_slider(pos):
                 if not slider.isSliderDown() and video_widget.duration:
                     slider.setValue(int((pos / video_widget.duration) * 1000))
-                # 更新时间标签
                 cur = int(pos or 0)
                 dur = int(video_widget.duration or 0)
                 time_label.setText(f"{cur//60:02d}:{cur%60:02d} / {dur//60:02d}:{dur%60:02d}")
@@ -693,126 +768,105 @@ class BiliDownloader(QWidget):
                     video_widget.set_position(sec)
             slider.sliderReleased.connect(slider_released)
 
-            # 线路切换
+            # 分集/线路切换
+            def on_ep_btn_clicked(idx):
+                for i, b in enumerate(ep_btns):
+                    b.setChecked(i == idx)
+                if MPV_AVAILABLE:
+                    video_widget.play(eps[idx][2])
+            for idx, btn in enumerate(ep_btns):
+                btn.clicked.connect(lambda _, idx=idx: on_ep_btn_clicked(idx))
+
             def change_line(idx):
-                    lid = lines[idx]
-                    import sqlite3
-                    conn = sqlite3.connect("anime.db")
-                    c = conn.cursor()
-                    c.execute("SELECT title, play_url, real_video_url FROM episode WHERE anime_id=? AND line_id=? ORDER BY id", (anime_id, lid))
-                    eps2 = c.fetchall()
-                    conn.close()
-                    # 清空原有按钮
-                    for btn in ep_btns:
-                        btn.setParent(None)
-                    ep_btns.clear()
-                    # 重新生成按钮
-                    for i, (ep_title, play_url, real_url) in enumerate(eps2):
-                        btn = QPushButton(ep_title)
-                        btn.setCheckable(True)
-                        btn.setMinimumWidth(60)
-                        btn.setStyleSheet("""
-                            QPushButton {
-                                background: #f6f7f9;
-                                border: 2px solid #00a1d6;
-                                border-radius: 8px;
-                                padding: 8px 18px;
-                                color: #222;
-                                font-size: 18px;
-                            }
-                            QPushButton:checked {
-                                background: #00a1d6;
-                                color: #fff;
-                                border: 2px solid #fb7299;
-                            }
-                        """)
-                        ep_btn_layout.insertWidget(ep_btn_layout.count() - 1, btn)
-                        ep_btns.append(btn)
-                        btn.clicked.connect(lambda _, idx=i: on_ep_btn_clicked(idx))
-                    # 默认播放最老一集
-                    if eps2:
-                        video_widget.play(eps2[-1][2])
-                        ep_btns[-1].setChecked(True)
-            line_box.currentIndexChanged.connect(change_line)
-
-            # 初始化音量
-            video_widget.set_volume(vol_slider.value())
-
-            # 关闭弹窗时销毁mpv，防止主程序卡死
-            def on_close(_):
-                try:
-                    video_widget.mpv.terminate()
-                except Exception:
-                    pass
-            dialog.finished.connect(on_close)
-
-            is_fullscreen = [False]
-
-            def toggle_fullscreen():
-                if not is_fullscreen[0]:
-                    # 伪全屏：最大化弹窗，隐藏右侧信息区
-                    dialog.showMaximized()
-                    for i in reversed(range(main_layout.count())):
-                        item = main_layout.itemAt(i)
-                        if item is not None and item.layout() == right:
-                            main_layout.takeAt(i)
-                    main_layout.setStretch(0, 1)
-                    # 控制条悬浮美化
-                    ctrl_widget = QWidget()
-                    ctrl_widget.setLayout(ctrl_layout)
-                    ctrl_widget.setStyleSheet("""
-                        QWidget {
-                            background: rgba(30,30,30,160);
-                            border-radius: 16px;
-                        }
+                lid = lines[idx]
+                import sqlite3
+                conn = sqlite3.connect("anime.db")
+                c = conn.cursor()
+                c.execute("SELECT title, play_url, real_video_url FROM episode WHERE anime_id=? AND line_id=? ORDER BY id", (anime_id, lid))
+                eps2 = c.fetchall()
+                conn.close()
+                # 清空旧按钮
+                for btn in ep_btns:
+                    btn.setParent(None)
+                ep_btns.clear()
+                for i, (ep_title, play_url, real_url) in enumerate(eps2):
+                    btn = QPushButton(ep_title)
+                    btn.setCheckable(True)
+                    btn.setMinimumWidth(60)
+                    btn.setStyleSheet("""
                         QPushButton {
-                            background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #00a1d6, stop:1 #7f53ac);
-                            color: #fff;
-                            border: none;
-                            border-radius: 12px;
-                            padding: 6px 18px;
-                            font-size: 16px;
-                        }
-                        QPushButton:hover {
-                            background: #fb7299;
-                        }
-                        QSlider::groove:horizontal {
-                            height: 8px;
-                            border-radius: 4px;
-                            background: #444;
-                        }
-                        QSlider::handle:horizontal {
-                            background: #00a1d6;
+                            background: #f6f7f9;
+                            border: 2px solid #00a1d6;
                             border-radius: 8px;
-                            width: 18px;
-                            margin: -5px 0;
+                            padding: 8px 18px;
+                            color: #222;
+                            font-size: 18px;
                         }
-                        QSlider::sub-page:horizontal {
+                        QPushButton:checked {
                             background: #00a1d6;
-                            border-radius: 4px;
+                            color: #fff;
+                            border: 2px solid #fb7299;
                         }
                     """)
-                    # 用widget包裹后替换原来的ctrl_layout
-                    left.removeItem(ctrl_layout)
-                    left.addWidget(ctrl_widget)
-                    is_fullscreen.append(ctrl_widget)
-                    is_fullscreen[0] = True
-                else:
-                    # 恢复
-                    dialog.showNormal()
-                    main_layout.setStretch(0, 2)
-                    main_layout.setStretch(1, 1)
-                    # 恢复控制条
-                    if len(is_fullscreen) > 1:
-                        ctrl_widget = is_fullscreen.pop()
-                        left.removeWidget(ctrl_widget)
-                        ctrl_widget.setParent(None)
-                        left.addLayout(ctrl_layout)
-                    is_fullscreen[0] = False
+                    ep_btn_layout.insertWidget(ep_btn_layout.count() - 1, btn)
+                    ep_btns.append(btn)
+                    btn.clicked.connect(lambda _, idx=i: on_ep_btn_clicked(idx))
+                if eps2:
+                    video_widget.play(eps2[0][2])
+                    ep_btns[0].setChecked(True)
+            line_box.currentIndexChanged.connect(change_line)
 
-            fullscreen_btn.clicked.connect(toggle_fullscreen)
+            # 状态恢复
+            state_path = f"anime_state_{anime_id}.json"
+            restored = False
+            if os.path.exists(state_path):
+                try:
+                    with open(state_path, "r", encoding="utf-8") as f:
+                        state = json.load(f)
+                    line_box.setCurrentIndex(state.get("line_idx", 0))
+                    ep_idx = state.get("ep_idx", 0)
+                    video_widget.set_volume(state.get("volume", 80))
+                    # 只在 duration 有效后再 seek
+                    def restore_pos_when_ready(dur):
+                        if dur and state.get("position", 0) > 0:
+                            video_widget.set_position(state.get("position", 0))
+                            # 恢复后只执行一次
+                            video_widget.on_duration_update = update_duration  # 恢复原回调
+                    # 临时替换回调
+                    video_widget.on_duration_update = restore_pos_when_ready
+                    if ep_btns and 0 <= ep_idx < len(ep_btns):
+                        ep_btns[ep_idx].setChecked(True)
+                        ep_btns[ep_idx].click()
+                    restored = True
+                except Exception:
+                    pass
+            # 默认播放最老一集（如果没有恢复）
+            if not restored:
+                cur_ep_idx = len(eps) - 1 if eps else 0
+                if eps:
+                    video_widget.play(eps[cur_ep_idx][2])
+                    ep_btns[cur_ep_idx].setChecked(True)
+                video_widget.set_volume(vol_slider.value())
 
-        dialog.exec_()
+            def closeEvent(event):
+                try:
+                    state = {
+                        "anime_id": anime_id,
+                        "line_idx": line_box.currentIndex(),
+                        "ep_idx": [i for i, b in enumerate(ep_btns) if b.isChecked()][0] if ep_btns else 0,
+                        "position": video_widget.mpv.time_pos or 0,
+                        "volume": video_widget.mpv.volume or 80,
+                    }
+                    with open(state_path, "w", encoding="utf-8") as f:
+                        json.dump(state, f)
+                    video_widget.mpv.terminate()
+                    video_widget.deleteLater()
+                except Exception:
+                    pass
+                event.accept()
+            dialog.closeEvent = closeEvent
+
+        dialog.show()
 
     def init_downloader_ui(self, widget):
         layout = QVBoxLayout(widget)
@@ -1546,7 +1600,7 @@ class BiliDownloader(QWidget):
                 # 这里应该是导入主题的代码
                 QMessageBox.information(self, "提示", "主题导入成功！")
             except Exception as e:
-                QMessageBox.warning(self, "错误", f"导入主题失败: {e}")
+                QMessageBox.warning(self, "错误", f"导入主题失败：{e}")
                 
     def export_theme(self):
         from PyQt5.QtWidgets import QFileDialog
@@ -1556,7 +1610,7 @@ class BiliDownloader(QWidget):
                 # 这里应该是导出主题的代码
                 QMessageBox.information(self, "提示", "主题导出成功！")
             except Exception as e:
-                QMessageBox.warning(self, "错误", f"导出主题失败: {e}")
+                QMessageBox.warning(self, "错误", f"导出主题失败：{e}")
                 
     def apply_custom_color(self, color):
         self.setStyleSheet(f"""
