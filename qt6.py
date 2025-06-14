@@ -1,18 +1,23 @@
-import sys
-import os
-
-# OpenGL 相关环境变量设置 - 必须在 PyQt5 导入之前
-os.environ["QT_OPENGL"] = "software"  # 改为 software
-os.environ["QT_QUICK_BACKEND"] = "software"
-os.environ["QSG_RHI_BACKEND"] = "software"
-os.environ["QT_OPENGL_BUGLIST"] = "0"
-os.environ["QT_AUTO_SCREEN_SCALE_FACTOR"] = "0"
-import re
-import threading
-import yt_dlp
-from urllib.request import urlopen
-import time
-from PyQt5.QtWidgets import (
+from PySide6.QtCore import QUrl, QObject, Slot, Property, Signal
+from PySide6.QtGui import QGuiApplication
+from PySide6.QtQml import QQmlApplicationEngine
+from PySide6.QtMultimediaWidgets import QVideoWidget
+from PySide6.QtMultimedia import QMediaPlayer
+from PySide6.QtCore import (
+    Qt,
+    Signal,  # PyQt5的pyqtSignal改为Signal
+    QObject,
+    QPoint,
+    QEvent,
+    QTimer,
+    QUrl,
+    QSize,
+    QPropertyAnimation,
+    QRect,
+    QThread,
+)
+from PySide6.QtGui import QPixmap, QImage, QIcon, QMouseEvent, QColor, QCursor, QFont, QPainter
+from PySide6.QtWidgets import (
     QApplication,
     QWidget,
     QLabel,
@@ -32,35 +37,36 @@ from PyQt5.QtWidgets import (
     QTabWidget,
     QGridLayout,
     QScrollArea,
-    QOpenGLWidget,  # 将这个移到这里，避免重复导入
+    QFileDialog,
+    QSpacerItem,
 )
-from PyQt5.QtGui import QPixmap, QImage, QIcon, QMouseEvent, QColor, QCursor, QFont
-from PyQt5.QtCore import (
-    Qt,
-    pyqtSignal,
-    QObject,
-    QPoint,
-    QEvent,
-    QTimer,
-    QUrl,
-    QSize,
-    QPropertyAnimation,
-    QRect,
-)
-from PyQt5.QtMultimedia import QMediaPlayer, QMediaContent
-from PyQt5.QtMultimediaWidgets import QVideoWidget
-from PyQt5.QtWidgets import QGraphicsDropShadowEffect
-import ctypes
-from ctypes import wintypes
-from PyQt5.QtCore import QRect, QTimer
-import socket
-from concurrent.futures import ThreadPoolExecutor
-import json
 import requests
 from bs4 import BeautifulSoup
 import logging
 from dataclasses import dataclass
 from typing import Optional
+from ctypes import wintypes
+import ctypes
+import socket
+from concurrent.futures import ThreadPoolExecutor
+import json
+import time
+from urllib.request import urlopen
+import yt_dlp
+import threading
+import re
+import sys
+import os
+
+# OpenGL 相关环境变量设置 - 必须在 PySide6 导入之前
+os.environ["QT_OPENGL"] = "software"
+os.environ["QT_QUICK_BACKEND"] = "software"
+os.environ["QSG_RHI_BACKEND"] = "software"
+os.environ["QT_OPENGL_BUGLIST"] = "0"
+os.environ["QT_AUTO_SCREEN_SCALE_FACTOR"] = "0"
+
+
+# 统一使用 PySide6
 
 
 @dataclass
@@ -136,9 +142,9 @@ def truncate_name(name, max_len):
 
 
 class DownloadSignals(QObject):
-    progress = pyqtSignal(float)
-    finished = pyqtSignal()
-    error = pyqtSignal(str)
+    progress = Signal(float)  # pyqtSignal改为Signal
+    finished = Signal()
+    error = Signal(str)
 
 
 class TitleBar(QFrame):
@@ -164,13 +170,15 @@ class TitleBar(QFrame):
             self.logo.setPixmap(pixmap)
         except Exception:
             self.logo = QLabel("B")
-            self.logo.setStyleSheet("color:white;font-size:18px;font-weight:bold;")
+            self.logo.setStyleSheet(
+                "color:white;font-size:18px;font-weight:bold;")
         hbox.addWidget(self.logo)
         hbox.addSpacing(4)
 
         # Title
         self.title = QLabel("自制视频下载器")
-        self.title.setStyleSheet("color:white;font-size:14px;font-weight:bold;")
+        self.title.setStyleSheet(
+            "color:white;font-size:14px;font-weight:bold;")
         hbox.addWidget(self.title)
         hbox.addStretch()
 
@@ -263,8 +271,13 @@ class BiliDownloader(QWidget):
         self._db_page = 1
         self._db_total_page = 1
         self._db_anime_data = []
+        # 添加线程管理
+        self.active_threads = []  # 跟踪活动线程
+        self._is_closing = False  # 关闭标志
+
         self.init_ui()
-        self.signals.progress.connect(lambda v: self.progress_bar.setValue(int(v)))
+        self.signals.progress.connect(
+            lambda v: self.progress_bar.setValue(int(v)))
         self.signals.finished.connect(self.on_download_finished)
         self.signals.error.connect(self.on_download_error)
         self.executor = ThreadPoolExecutor(max_workers=4)
@@ -300,19 +313,10 @@ class BiliDownloader(QWidget):
 
     def init_anime_zone_ui(self, widget):
         """初始化动漫专区界面"""
-        from PyQt5.QtWidgets import (
-            QVBoxLayout,
-            QHBoxLayout,
-            QLineEdit,
-            QPushButton,
-            QScrollArea,
-            QWidget,
-            QLabel,
-        )
-        from PyQt5.QtCore import Qt
-        from PyQt5.QtGui import QFont
 
-        layout = QVBoxLayout(widget)
+        # 修复布局创建方式
+        layout = QVBoxLayout()  # 不传递 widget 参数
+        widget.setLayout(layout)  # 然后设置到 widget 上
         layout.setContentsMargins(20, 20, 20, 20)
         layout.setSpacing(15)
 
@@ -363,9 +367,9 @@ class BiliDownloader(QWidget):
         button_style = """
             QPushButton {
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                            stop:0 #ff69b4, stop:1 #ff1493);
+                            stop:0 #00a1d6, stop:1 #0088cc);
                 color: white;
-                border: none;
+                border: 2px solid transparent;
                 border-radius: 25px;
                 padding: 10px 30px;
                 font-size: 14px;
@@ -374,14 +378,17 @@ class BiliDownloader(QWidget):
             }
             QPushButton:hover {
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                            stop:0 #ff1493, stop:1 #dc143c);
+                            stop:0 #0088cc, stop:1 #006699);
+                border-color: #e3f1fd;
             }
             QPushButton:pressed {
-                background: #dc143c;
+                background: #006699;
             }
             QPushButton:disabled {
-                background: #cccccc;
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                            stop:0 #cccccc, stop:1 #999999);
                 color: #666666;
+                border-color: transparent;
             }
         """
 
@@ -532,7 +539,8 @@ class BiliDownloader(QWidget):
             video_container.setStyleSheet("background: #000000; border: none;")
             video_container.setMinimumHeight(400)  # 降低最小高度
             video_container.setMaximumHeight(800)  # 设置最大高度
-            video_container.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+            video_container.setSizePolicy(
+                QSizePolicy.Expanding, QSizePolicy.Expanding)
 
             video_layout = QVBoxLayout(video_container)
             video_layout.setContentsMargins(0, 0, 0, 0)
@@ -548,7 +556,8 @@ class BiliDownloader(QWidget):
 
             # 确保视频控件不为空并设置大小策略
             if video_widget is not None:
-                video_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+                video_widget.setSizePolicy(
+                    QSizePolicy.Expanding, QSizePolicy.Expanding)
                 video_widget.setMinimumHeight(300)  # 设置最小高度
                 video_layout.addWidget(video_widget)
             else:
@@ -561,18 +570,20 @@ class BiliDownloader(QWidget):
             # 创建控制栏
             control_bar = self.create_control_bar()
             if control_bar is not None:
-                control_bar.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+                control_bar.setSizePolicy(
+                    QSizePolicy.Expanding, QSizePolicy.Fixed)
                 video_layout.addWidget(control_bar)
 
             # 内容区域 - 修复滚动和布局
             content_container = QScrollArea()  # 改为滚动区域
             content_container.setWidgetResizable(True)
-            content_container.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+            content_container.setHorizontalScrollBarPolicy(
+                Qt.ScrollBarAsNeeded)
             content_container.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
             content_container.setStyleSheet(
                 """
                 QScrollArea {
-                    background: #f8f9fa; 
+                    background: #f8f9fa;
                     border-top: 1px solid #e9ecef;
                     border: none;
                 }
@@ -617,7 +628,8 @@ class BiliDownloader(QWidget):
                 name, cover_url, intro, year, area, type_str, total_eps, line_names
             )
             if info_section is not None:
-                info_section.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
+                info_section.setSizePolicy(
+                    QSizePolicy.Fixed, QSizePolicy.Expanding)
                 content_layout.addWidget(info_section)
 
             # 右侧：分集列表 - 修复大小策略
@@ -641,7 +653,8 @@ class BiliDownloader(QWidget):
             if MPV_AVAILABLE and video_widget and hasattr(video_widget, "mpv"):
                 try:
                     self.setup_video_events(video_widget, control_bar, dialog)
-                    self.setup_episode_events(video_widget, episode_section, eps)
+                    self.setup_episode_events(
+                        video_widget, episode_section, eps)
                     self.setup_line_events(
                         video_widget, info_section, anime_id, lines, episode_section
                     )
@@ -711,9 +724,9 @@ class BiliDownloader(QWidget):
         title_label.setStyleSheet(
             """
             QLabel {
-                font-size: 18px; 
-                font-weight: bold; 
-                color: #333333; 
+                font-size: 18px;
+                font-weight: bold;
+                color: #333333;
                 background: transparent;
                 border: none;
             }
@@ -729,7 +742,7 @@ class BiliDownloader(QWidget):
         cover_label.setStyleSheet(
             """
             QLabel {
-                border: 2px solid #e9ecef; 
+                border: 2px solid #e9ecef;
                 border-radius: 8px;
                 background: #f8f9fa;
                 color: #666666;
@@ -783,8 +796,8 @@ class BiliDownloader(QWidget):
             label.setStyleSheet(
                 """
                 QLabel {
-                    font-weight: bold; 
-                    color: #495057; 
+                    font-weight: bold;
+                    color: #495057;
                     min-width: 50px;
                     background: transparent;
                     border: none;
@@ -816,7 +829,7 @@ class BiliDownloader(QWidget):
             line_label.setStyleSheet(
                 """
                 QLabel {
-                    font-weight: bold; 
+                    font-weight: bold;
                     color: #495057;
                     background: transparent;
                     border: none;
@@ -866,7 +879,7 @@ class BiliDownloader(QWidget):
             intro_label.setStyleSheet(
                 """
                 QLabel {
-                    font-weight: bold; 
+                    font-weight: bold;
                     color: #495057;
                     background: transparent;
                     border: none;
@@ -907,7 +920,7 @@ class BiliDownloader(QWidget):
             intro_text.setStyleSheet(
                 """
                 QLabel {
-                    color: #212529; 
+                    color: #212529;
                     padding: 8px;
                     background: transparent;
                     border: none;
@@ -916,7 +929,8 @@ class BiliDownloader(QWidget):
                 }
             """
             )
-            intro_text.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
+            intro_text.setSizePolicy(
+                QSizePolicy.Expanding, QSizePolicy.Minimum)
 
             intro_scroll.setWidget(intro_text)
             layout.addWidget(intro_scroll)
@@ -924,7 +938,7 @@ class BiliDownloader(QWidget):
         return info_widget
 
     def create_episode_section_fixed(self, episodes):
-        """创建修复的分集区域"""
+        """创建修复的分集区域 - 优化样式版本"""
         episode_widget = QFrame()
         episode_widget.setStyleSheet(
             """
@@ -936,7 +950,8 @@ class BiliDownloader(QWidget):
             }
         """
         )
-        episode_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        episode_widget.setSizePolicy(
+            QSizePolicy.Expanding, QSizePolicy.Expanding)
 
         layout = QVBoxLayout(episode_widget)
         layout.setSpacing(12)
@@ -947,8 +962,8 @@ class BiliDownloader(QWidget):
         title_label.setStyleSheet(
             """
             QLabel {
-                font-size: 16px; 
-                font-weight: bold; 
+                font-size: 16px;
+                font-weight: bold;
                 color: #333333;
                 background: transparent;
                 border: none;
@@ -997,49 +1012,57 @@ class BiliDownloader(QWidget):
 
         # 分集容器
         episode_container = QWidget()
-        episode_container.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        episode_container.setSizePolicy(
+            QSizePolicy.Expanding, QSizePolicy.Expanding)
         episode_layout = QGridLayout(episode_container)
         episode_layout.setSpacing(8)
         episode_layout.setContentsMargins(5, 5, 5, 5)
 
         # 创建分集按钮
         episode_buttons = []
-        columns = 5  # 调整为每行5个按钮
+        columns = 5  # 每行5个按钮
 
         for i, (ep_title, play_url, real_url) in enumerate(episodes):
             btn = QPushButton(ep_title)
             btn.setCheckable(True)
-            btn.setMinimumSize(100, 40)
-            btn.setMaximumSize(150, 50)
+            btn.setMinimumSize(100, 45)
+            btn.setMaximumSize(150, 55)
             btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
             btn.setObjectName(f"episode_button_{i}")
             btn.setStyleSheet(
                 """
                 QPushButton {
-                    background: #ffffff;
+                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                                stop:0 #ffffff, stop:1 #f8f9fa);
                     border: 2px solid #00a1d6;
-                    border-radius: 6px;
-                    padding: 6px 10px;
+                    border-radius: 8px;
+                    padding: 8px 12px;
                     color: #00a1d6;
-                    font-size: 12px;
+                    font-size: 13px;
                     font-weight: bold;
                     text-align: center;
                 }
                 QPushButton:hover {
-                    background: #e3f1fd;
+                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                                stop:0 #e3f1fd, stop:1 #cce7f0);
                     border-color: #0088cc;
                 }
                 QPushButton:checked {
-                    background: #00a1d6;
+                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                                stop:0 #00a1d6, stop:1 #0088cc);
                     color: #ffffff;
                     border-color: #0088cc;
+                    font-weight: bold;
+                }
+                QPushButton:checked:hover {
+                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                                stop:0 #0088cc, stop:1 #006699);
                 }
                 QPushButton:pressed {
                     background: #0088cc;
                 }
             """
             )
-
             row = i // columns
             col = i % columns
             episode_layout.addWidget(btn, row, col)
@@ -1058,13 +1081,12 @@ class BiliDownloader(QWidget):
         return episode_widget
 
     def create_mpv_widget(self, parent_dialog):
-        """创建 MPV 播放器组件 - 避免 OpenGL 问题的版本"""
+        """创建 MPV 播放器组件 - 简化版本，避免绘制冲突"""
         if not MPV_AVAILABLE:
             return self.create_fallback_widget()
 
         try:
-            # 使用普通 QWidget 而不是 QOpenGLWidget
-            class SafeMpvWidget(QWidget):  # 使用QWidget而不是QOpenGLWidget
+            class SafeMpvWidget(QWidget):
                 def __init__(self, parent=None):
                     super().__init__(parent)
                     self.parent_dialog = parent
@@ -1073,17 +1095,18 @@ class BiliDownloader(QWidget):
 
                     # 基本设置
                     self.setMinimumSize(800, 450)
-                    self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+                    self.setSizePolicy(QSizePolicy.Expanding,
+                                       QSizePolicy.Expanding)
                     self.setStyleSheet("background: #000000;")
                     self.setFocusPolicy(Qt.StrongFocus)
                     self.setMouseTracking(True)
 
-                    # 确保使用软件渲染
-                    self.setAttribute(Qt.WA_PaintOnScreen, False)
-                    self.setAttribute(Qt.WA_OpaquePaintEvent, False)  # 改为False
-                    self.setAttribute(Qt.WA_NativeWindow, True)  # 关键
-                    QTimer.singleShot(1000, self.safe_init_mpv)
-                    QTimer.singleShot(10, self.ensure_visible)
+                    # 关键修复：设置正确的属性，避免绘制冲突
+                    self.setAttribute(Qt.WA_OpaquePaintEvent, True)
+                    self.setAttribute(Qt.WA_NoSystemBackground, True)
+                    self.setAttribute(Qt.WA_NativeWindow, True)
+                    self.setAttribute(Qt.WA_PaintOnScreen, True)
+                    self.setAttribute(Qt.WA_DontCreateNativeAncestors, False)
 
                     # 播放状态
                     self.duration = 0
@@ -1091,6 +1114,7 @@ class BiliDownloader(QWidget):
                     self.is_seeking = False
                     self.loading = False
                     self.mpv = None
+                    self._initialized = False
 
                     # 回调函数
                     self.on_time_update = None
@@ -1099,14 +1123,29 @@ class BiliDownloader(QWidget):
                     self.on_volume_update = None
                     self.on_loading_update = None
 
-                    # 延迟初始化 MPV
-                    QTimer.singleShot(1000, self.safe_init_mpv)  # 增加延迟时间
-
                     # 控制栏相关
                     self.control_visible = True
                     self.hide_timer = QTimer(self)
                     self.hide_timer.setSingleShot(True)
                     self.hide_timer.timeout.connect(self.auto_hide_controls)
+
+                    # 创建状态标签 - 使用更简单的方式
+                    self.status_label = QLabel("正在初始化播放器...", self)
+                    self.status_label.setAlignment(Qt.AlignCenter)
+                    self.status_label.setStyleSheet("""
+                        QLabel {
+                            color: #ffffff;
+                            font-size: 16px;
+                            background: rgba(0, 0, 0, 200);
+                            border-radius: 8px;
+                            padding: 20px;
+                            border: 2px solid #00a1d6;
+                        }
+                    """)
+                    self.status_label.hide()
+
+                    # 延迟初始化 MPV
+                    QTimer.singleShot(1000, self.safe_init_mpv)
 
                 def ensure_visible(self):
                     if not self.isVisible():
@@ -1114,94 +1153,330 @@ class BiliDownloader(QWidget):
 
                 def safe_init_mpv(self):
                     try:
-                        if not self.winId():
-                            QTimer.singleShot(200, self.safe_init_mpv)
-                            return
+                        self.status_label.setText("正在初始化播放器...")
+                        self.status_label.show()
 
-                        print("窗口句柄：", self.winId())
+                        # 确保窗口已经完全创建且可见
+                        if not self.isVisible():
+                            self.show()
 
+                        # 等待窗口完全渲染
+                        self.update()
+                        QApplication.processEvents()
+
+                        # 多次检查窗口句柄
+                        max_attempts = 10
+                        for attempt in range(max_attempts):
+                            wid = self.winId()
+                            if wid and wid != 0:
+                                print(f"获取到有效窗口句柄: {wid} (尝试 {attempt + 1})")
+                                break
+                            else:
+                                print(f"窗口句柄无效，等待... (尝试 {attempt + 1})")
+                                QTimer.singleShot(200, lambda: None)
+                                QApplication.processEvents()
+                                if attempt == max_attempts - 1:
+                                    raise Exception("无法获取有效的窗口句柄")
+
+                        # 使用简化的MPV配置，移除有问题的选项
                         self.mpv = MPV(
-                            wid=str(int(self.winId())),
+                            wid=str(int(wid)),
                             log_handler=print,
-                            loglevel="error",  # 改为 warn 或 error，减少输出debug
+                            loglevel="error",
+                            # 基本视频输出设置
+                            vo="direct3d,gpu,opengl,software",
+                            hwdec="no",
+                            # 网络设置 - 使用更简单的配置
+                            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                            network_timeout=60,
+                            # 移除可能有问题的HTTP头设置，改为通过user-agent处理
+                            # 缓存设置
+                            cache=True,
+                            cache_secs=30,
+                            demuxer_max_bytes="50MiB",
+                            demuxer_readahead_secs=15,
+                            # 基本设置
+                            keep_open=True,
+                            idle=True,
+                            osd_level=0,
+                            cursor_autohide=False,
+                            # 音频设置
+                            audio_device="auto",
+                            volume=80,
+                            # 渲染设置
+                            gpu_context="auto",
+                            opengl_es="no",
+                            # ytdl设置
+                            ytdl=True,
+                            ytdl_format="best"
                         )
 
+                        # 绑定事件前先测试MPV是否正常工作
+                        try:
+                            # 测试基本属性访问
+                            _ = self.mpv.volume
+                            _ = self.mpv.pause
+                        except Exception as e:
+                            print(f"MPV基本功能测试失败: {e}")
+                            raise
+
                         # 绑定事件
-                        self.mpv.observe_property("duration", self._on_duration)
+                        self.mpv.observe_property(
+                            "duration", self._on_duration)
                         self.mpv.observe_property("time-pos", self._on_timepos)
                         self.mpv.observe_property("pause", self._on_pause)
                         self.mpv.observe_property("volume", self._on_volume)
-                        self.mpv.observe_property("core-idle", self._on_core_idle)
+                        self.mpv.observe_property(
+                            "core-idle", self._on_core_idle)
 
                         self.mpv.pause = True
                         self.mpv.volume = 80
+
+                        self._initialized = True
+                        self.status_label.setText("播放器就绪")
+                        QTimer.singleShot(1500, self.status_label.hide)
 
                         print("MPV 初始化成功")
 
                     except Exception as e:
                         self.logger.error(f"MPV 初始化失败: {e}")
                         self.mpv = None
+                        self._initialized = False
                         print(f"MPV 初始化失败: {e}")
                         self.show_error_message(f"MPV 初始化失败: {e}")
 
                 def show_error_message(self, message):
-                    """显示错误信息"""
-                    error_label = QLabel(message)
-                    error_label.setAlignment(Qt.AlignCenter)
-                    error_label.setStyleSheet(
-                        "color: white; font-size: 16px; background: #000000; padding: 20px;"
-                    )
-                    layout = QVBoxLayout(self)
-                    layout.addWidget(error_label)
+                    """显示错误信息 - 改进版本"""
+                    self.status_label.setText(f"播放失败")
+                    self.status_label.setStyleSheet("""
+                        QLabel {
+                            color: #ff4444;
+                            font-size: 16px;
+                            background: rgba(0, 0, 0, 200);
+                            border-radius: 8px;
+                            padding: 20px;
+                            border: 2px solid #ff4444;
+                        }
+                    """)
+                    self.status_label.show()
+
+                    # 5秒后自动隐藏
+                    QTimer.singleShot(8000, self.status_label.hide)
+
+                    # 同时在控制台输出详细错误信息
+                    print(f"播放错误: {message}")
 
                 def play(self, url):
-                    """播放视频 - 添加安全检查"""
-                    if not self.mpv:
+                    """播放视频 - 修复版本"""
+                    if not self.mpv or not self._initialized:
                         print("MPV 播放器未初始化")
+                        self.show_error_message("播放器未初始化")
                         return
-
-                    print("实际播放URL：", url)
-                    self.mpv.play(url)
 
                     if not url:
                         print("视频链接为空")
+                        self.show_error_message("视频链接为空")
                         return
 
                     try:
+                        print(f"开始播放: {url}")
+
+                        # 显示加载状态
                         self.loading = True
                         if self.on_loading_update:
                             self.on_loading_update(True)
 
+                        self.status_label.setText("正在加载视频...")
+                        self.status_label.setStyleSheet("""
+                            QLabel {
+                                color: #ffffff;
+                                font-size: 16px;
+                                background: rgba(0, 0, 0, 200);
+                                border-radius: 8px;
+                                padding: 20px;
+                                border: 2px solid #00a1d6;
+                            }
+                        """)
+                        self.status_label.show()
+
                         # 停止当前播放
-                        self.mpv.stop()
+                        try:
+                            self.mpv.stop()
+                            # 短暂等待确保停止完成
+                            QTimer.singleShot(
+                                100, lambda: self._continue_play(url))
+                            return
+                        except:
+                            pass
 
-                        # 记录播放位置
-                        if url != self.state.last_url:
-                            self.state.last_position = 0
-
-                        self.state.last_url = url
-
-                        # 播放新视频
-                        self.mpv.play(url)
-
-                        # 等待视频开始加载后再处理其他逻辑
-                        def on_file_loaded():
-                            if self.on_loading_update:
-                                self.on_loading_update(False)
-                            self.loading = False
-
-                        # 延迟执行，确保视频开始加载
-                        QTimer.singleShot(1000, on_file_loaded)
+                        self._continue_play(url)
 
                     except Exception as e:
-                        print(f"播放失败: {e}")
+                        error_msg = f"播放失败: {e}"
+                        print(error_msg)
+                        self.show_error_message(error_msg)
                         if self.on_loading_update:
                             self.on_loading_update(False)
                         self.loading = False
 
+                def _continue_play(self, url):
+                    """继续播放流程 - 修复HLS流播放"""
+                    try:
+                        # 处理URL
+                        processed_url = self.process_video_url(url)
+                        if not processed_url:
+                            self.show_error_message("视频链接处理失败")
+                            return
+
+                        # 记录播放位置
+                        if url != self.state.last_url:
+                            self.state.last_position = 0
+                        self.state.last_url = url
+
+                        print(f"准备播放: {processed_url}")
+
+                        # 对于HLS流，直接播放，不设置无效属性
+                        if processed_url.endswith('.m3u8') or 'm3u8' in processed_url:
+                            self.status_label.setText("正在加载HLS流...")
+                            self.status_label.show()
+
+                            try:
+                                # 直接播放HLS流，不设置无效的属性
+                                self.mpv.play(processed_url)
+                                print(f"开始播放HLS流: {processed_url}")
+
+                            except Exception as e:
+                                print(f"HLS流播放失败: {e}")
+                                self.show_error_message(
+                                    f"HLS流播放失败: {e}\n\n可能原因:\n1. 视频链接已失效\n2. 网络连接问题\n3. 服务器限制访问")
+                                return
+                        else:
+                            # 普通视频文件播放
+                            if self._check_url_validity(processed_url):
+                                self.mpv.play(processed_url)
+                            else:
+                                self.show_error_message("视频链接无效或已过期，请重新获取")
+                                return
+
+                        # 延迟隐藏加载标签
+                        def hide_loading():
+                            if hasattr(self, 'status_label'):
+                                self.status_label.hide()
+                            if self.on_loading_update:
+                                self.on_loading_update(False)
+                            self.loading = False
+
+                        QTimer.singleShot(5000, hide_loading)
+
+                    except Exception as e:
+                        error_msg = f"播放失败: {e}"
+                        print(error_msg)
+                        self.show_error_message(error_msg)
+                        if self.on_loading_update:
+                            self.on_loading_update(False)
+                        self.loading = False
+
+                def _check_url_validity(self, url):
+                    """检查URL有效性 - 特别针对HLS流"""
+                    try:
+                        import urllib.request
+                        import urllib.parse
+
+                        # 对于HLS流，先检查m3u8文件是否可访问
+                        if url.endswith('.m3u8') or 'm3u8' in url:
+                            print(f"检查HLS流: {url}")
+
+                            # 创建请求，使用更完整的请求头
+                            req = urllib.request.Request(
+                                url,
+                                headers={
+                                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                                    'Referer': 'https://www.yzzy-online.com/',
+                                    'Accept': '*/*',
+                                    'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+                                    'Accept-Encoding': 'gzip, deflate',
+                                    'Connection': 'keep-alive',
+                                    'Sec-Fetch-Dest': 'empty',
+                                    'Sec-Fetch-Mode': 'cors',
+                                    'Sec-Fetch-Site': 'cross-site'
+                                }
+                            )
+
+                            try:
+                                with urllib.request.urlopen(req, timeout=15) as response:
+                                    if response.status == 200:
+                                        # 读取m3u8内容检查格式
+                                        content = response.read().decode('utf-8')
+                                        if '#EXTM3U' in content:
+                                            print("HLS流格式验证通过")
+                                            return True
+                                        else:
+                                            print("HLS流格式无效")
+                                            return False
+                                    else:
+                                        print(f"HLS流响应状态码: {response.status}")
+                                        return False
+                            except Exception as e:
+                                print(f"HLS流检查失败: {e}")
+                                # 对于HLS流，即使检查失败也允许尝试播放
+                                return True
+                        else:
+                            # 普通视频文件的检查
+                            req = urllib.request.Request(
+                                url,
+                                headers={
+                                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+                                    'Referer': 'https://www.douyin.com/',
+                                    'Accept': '*/*'
+                                }
+                            )
+
+                            with urllib.request.urlopen(req, timeout=10) as response:
+                                return response.status == 200
+
+                    except Exception as e:
+                        print(f"URL有效性检查失败: {e}")
+                        return True  # 检查失败时仍然尝试播放
+
+                def process_video_url(self, url):
+                    """处理视频URL - 修复版本"""
+                    if not url:
+                        return url
+
+                    try:
+                        # 检查URL是否有效
+                        import urllib.request
+                        import urllib.parse
+
+                        # 解析URL参数，检查是否过期
+                        parsed_url = urllib.parse.urlparse(url)
+                        query_params = urllib.parse.parse_qs(parsed_url.query)
+
+                        if 'x-expires' in query_params:
+                            import time
+                            expires = int(query_params['x-expires'][0])
+                            current_time = int(time.time())
+
+                            if current_time > expires:
+                                print(
+                                    f"视频链接已过期，过期时间: {expires}, 当前时间: {current_time}")
+                                self.show_error_message("视频链接已过期，请重新获取")
+                                return None
+
+                        # 添加必要的请求头
+                        if url.endswith('.m3u8') or 'm3u8' in url or 'capcut' in url:
+                            # 对于特殊流媒体链接，添加用户代理和引用页
+                            return url
+
+                        return url
+
+                    except Exception as e:
+                        print(f"处理视频URL时出错: {e}")
+                        return url
+
                 def seek_to(self, position):
-                    """跳转到指定位置"""
-                    if not (hasattr(self, "mpv") and self.mpv):
+                    """跳转到指定位置 - 改进版本"""
+                    if not (hasattr(self, "mpv") and self.mpv and self._initialized):
                         return
 
                     try:
@@ -1217,35 +1492,45 @@ class BiliDownloader(QWidget):
                         elif position > duration:
                             position = duration - 1
 
-                        # 使用 seek 命令而不是直接设置 time_pos
+                        # 显示跳转状态
+                        mins, secs = divmod(int(position), 60)
+                        self.status_label.setText(f"跳转到 {mins:02d}:{secs:02d}")
+                        self.status_label.show()
+                        QTimer.singleShot(2000, self.status_label.hide)
+
+                        # 使用 seek 命令
                         self.mpv.seek(position, reference="absolute")
                         print(f"跳转到: {position:.2f}秒")
 
                     except Exception as e:
                         print(f"跳转失败: {e}")
-                        # 尝试使用备用方法
-                        try:
-                            self.mpv.time_pos = position
-                        except Exception as e2:
-                            print(f"备用跳转方法也失败: {e2}")
+                        self.show_error_message(f"跳转失败: {e}")
 
                 def set_pause(self, paused):
                     """设置暂停状态"""
-                    if self.mpv:
+                    if self.mpv and self._initialized:
                         try:
                             self.mpv.pause = paused
+                            status = "暂停" if paused else "播放"
+                            self.status_label.setText(status)
+                            self.status_label.show()
+                            QTimer.singleShot(1000, self.status_label.hide)
                         except Exception as e:
                             self.logger.error(f"设置暂停失败: {e}")
 
                 def set_volume(self, volume):
                     """设置音量"""
-                    if self.mpv:
+                    if self.mpv and self._initialized:
                         try:
-                            self.mpv.volume = max(0, min(100, volume))
+                            volume = max(0, min(100, volume))
+                            self.mpv.volume = volume
+                            self.status_label.setText(f"音量: {volume}%")
+                            self.status_label.show()
+                            QTimer.singleShot(1000, self.status_label.hide)
                         except Exception as e:
                             self.logger.error(f"设置音量失败: {e}")
-
                 # MPV 事件回调
+
                 def _on_duration(self, name, value):
                     if value is not None:
                         self.duration = value
@@ -1278,54 +1563,98 @@ class BiliDownloader(QWidget):
 
                 # 全屏相关
                 def enter_fullscreen(self):
-                    """进入全屏"""
+                    """进入全屏 - 修复版本"""
                     if not self.state.is_fullscreen:
                         self.state.is_fullscreen = True
+
+                        # 保存原始状态
                         self._old_parent = self.parent()
                         self._old_geometry = self.geometry()
-                        # 控制栏浮动
+                        self._old_window_flags = self.windowFlags()
+
+                        # 处理控制栏 - 先隐藏再重新创建为浮动窗口
                         if hasattr(self, "control_bar") and self.control_bar:
+                            self.control_bar.hide()
                             self.control_bar.setParent(None)
                             self.control_bar.setWindowFlags(
-                                Qt.Tool | Qt.FramelessWindowHint
+                                Qt.Tool | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
                             )
                             self.control_bar.setAttribute(
-                                Qt.WA_TranslucentBackground, True
-                            )
-                            self.control_bar.setWindowModality(Qt.NonModal)
-                            self.control_bar.setVisible(True)
-                            self._update_control_bar_geometry()
-                            self.control_bar.show()
+                                Qt.WA_TranslucentBackground, True)
+
+                        # 设置视频窗口为全屏
                         self.setParent(None)
-                        self.setWindowFlags(
-                            Qt.Window | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
-                        )
+                        self.setWindowFlags(Qt.Window | Qt.FramelessWindowHint)
                         self.showFullScreen()
-                        QTimer.singleShot(200, self.rebind_mpv)
+
+                        # 显示控制栏（浮动）
+                        if hasattr(self, "control_bar") and self.control_bar:
+                            self.control_bar.show()
+                            self.control_bar.raise_()
+                            self._update_control_bar_geometry()
+
+                        # 延迟重新绑定MPV，确保窗口完全切换后再绑定
+                        QTimer.singleShot(500, self.rebind_mpv)
+
+                        # 设置鼠标自动隐藏
+                        self.hide_timer.start(3000)
 
                 def exit_fullscreen(self):
-                    """退出全屏"""
+                    """退出全屏 - 修复版本"""
                     if self.state.is_fullscreen:
                         self.state.is_fullscreen = False
-                        self.setWindowFlags(Qt.Widget)
+
+                        # 停止自动隐藏定时器
+                        if hasattr(self, "hide_timer"):
+                            self.hide_timer.stop()
+
+                        # 恢复鼠标
+                        self.setCursor(QCursor(Qt.ArrowCursor))
+
+                        # 隐藏浮动控制栏
+                        if hasattr(self, "control_bar") and self.control_bar:
+                            self.control_bar.hide()
+                            self.control_bar.setParent(None)
+
+                        # 恢复窗口
+                        if hasattr(self, "_old_window_flags"):
+                            self.setWindowFlags(self._old_window_flags)
+                        else:
+                            self.setWindowFlags(Qt.Widget)
+
                         if hasattr(self, "_old_parent") and self._old_parent:
                             self.setParent(self._old_parent)
                             if hasattr(self, "_old_geometry"):
                                 self.setGeometry(self._old_geometry)
-                        self.show()
-                        self.setCursor(QCursor(Qt.ArrowCursor))
-                        # 控制栏还原
+
+                        self.showNormal()
+
+                        # 恢复控制栏到原位置
                         if hasattr(self, "control_bar") and self.control_bar:
-                            self.control_bar.setParent(self)
+                            # 重新创建控制栏为普通widget
+                            if hasattr(self, "_old_parent") and self._old_parent:
+                                self.control_bar.setParent(self._old_parent)
+                            else:
+                                self.control_bar.setParent(self)
                             self.control_bar.setWindowFlags(Qt.Widget)
-                            self.control_bar.setVisible(True)
+                            self.control_bar.show()
                             self.control_bar.raise_()
                             self._update_control_bar_geometry()
-                        QTimer.singleShot(200, self.rebind_mpv)
+
+                        # 延迟重新绑定MPV
+                        QTimer.singleShot(500, self.rebind_mpv)
 
                 def resizeEvent(self, event):
-                    """窗口大小变化时，控制栏始终在底部"""
                     super().resizeEvent(event)
+                    # 居中显示状态标签
+                    if hasattr(self, 'status_label') and self.status_label:
+                        self.status_label.resize(350, 120)
+                        center_x = (self.width() -
+                                    self.status_label.width()) // 2
+                        center_y = (self.height() -
+                                    self.status_label.height()) // 2
+                        self.status_label.move(center_x, center_y)
+                    # 更新控制栏位置
                     self._update_control_bar_geometry()
 
                 def moveEvent(self, event):
@@ -1333,63 +1662,129 @@ class BiliDownloader(QWidget):
                     self._update_control_bar_geometry()
 
                 def _update_control_bar_geometry(self):
-                    if (
-                        hasattr(self, "control_bar")
-                        and self.control_bar
-                        and self.control_bar.isVisible()
-                    ):
-                        if (
-                            self.state.is_fullscreen
-                            and self.control_bar.windowFlags() & Qt.Tool
-                        ):
-                            global_pos = self.mapToGlobal(self.rect().bottomLeft())
+                    """更新控制栏位置 - 修复版本"""
+                    if not (hasattr(self, "control_bar") and self.control_bar and self.control_bar.isVisible()):
+                        return
+
+                    if self.state.is_fullscreen:
+                        # 全屏模式：控制栏浮动在屏幕底部
+                        if self.control_bar.windowFlags() & Qt.Tool:
+                            screen = QApplication.primaryScreen()
+                            screen_rect = screen.geometry()
+                            control_height = self.control_bar.height()
+
                             self.control_bar.setGeometry(
-                                global_pos.x(),
-                                global_pos.y() - self.control_bar.height(),
-                                self.width(),
-                                self.control_bar.height(),
+                                screen_rect.x(),
+                                screen_rect.bottom() - control_height,
+                                screen_rect.width(),
+                                control_height
                             )
-                        else:
-                            self.control_bar.move(
-                                0, self.height() - self.control_bar.height()
-                            )
-                            self.control_bar.resize(
-                                self.width(), self.control_bar.height()
-                            )
+                    else:
+                        # 窗口模式：控制栏在视频窗口底部
+                        self.control_bar.setGeometry(
+                            0,
+                            self.height() - self.control_bar.height(),
+                            self.width(),
+                            self.control_bar.height()
+                        )
 
                 def rebind_mpv(self):
-                    """重新绑定 MPV"""
-                    if self.mpv:
-                        try:
-                            wid = str(int(self.winId()))
-                            self.mpv.wid = wid
-                            self.update()
-                        except Exception as e:
-                            self.logger.error(f"重新绑定 MPV 失败: {e}")
+                    """重新绑定 MPV - 改进版本，避免重复绑定"""
+                    if not (hasattr(self, "mpv") and self.mpv and self._initialized):
+                        return
 
-                # 控制栏显示/隐藏
+                    # 防止重复绑定
+                    if hasattr(self, '_rebinding') and self._rebinding:
+                        print("MPV正在重新绑定中，跳过此次请求")
+                        return
+
+                    self._rebinding = True
+
+                    try:
+                        # 确保窗口完全创建
+                        wid = self.winId()
+                        if not wid or wid == 0:
+                            print("窗口句柄无效，延迟重试")
+                            QTimer.singleShot(500, self._retry_rebind)
+                            return
+
+                        new_wid = str(int(wid))
+                        current_wid = getattr(self.mpv, 'wid', None)
+
+                        # 如果窗口ID没有变化，不需要重新绑定
+                        if current_wid == new_wid:
+                            print(f"窗口ID未变化 ({new_wid})，跳过重新绑定")
+                            self._rebinding = False
+                            return
+
+                        print(f"重新绑定MPV: {current_wid} -> {new_wid}")
+
+                        # 保存当前播放状态
+                        was_playing = not getattr(self.mpv, "pause", True)
+                        current_pos = getattr(self.mpv, "time_pos", 0) or 0
+                        current_vol = getattr(self.mpv, "volume", 80) or 80
+
+                        # 更新窗口ID
+                        self.mpv.wid = new_wid
+
+                        # 强制更新
+                        self.update()
+                        QApplication.processEvents()
+
+                        # 恢复播放状态
+                        if was_playing and current_pos > 0:
+                            QTimer.singleShot(
+                                200, lambda: self._restore_playback_state(current_pos))
+
+                    except Exception as e:
+                        print(f"重新绑定 MPV 失败: {e}")
+                        # 如果绑定失败，延迟重试
+                        QTimer.singleShot(2000, self._retry_rebind)
+                    finally:
+                        # 延迟重置绑定标志
+                        QTimer.singleShot(1000, lambda: setattr(
+                            self, '_rebinding', False))
+
+                def _retry_rebind(self):
+                    """重试重新绑定"""
+                    self._rebinding = False
+                    self.rebind_mpv()
+
+                def _restore_playback_state(self, position):
+                    """恢复播放状态"""
+                    try:
+                        if hasattr(self, "mpv") and self.mpv:
+                            self.mpv.seek(position, reference="absolute")
+                    except Exception as e:
+                        print(f"恢复播放位置失败: {e}")
+
                 def show_controls(self):
-                    """显示控制栏"""
+                    """显示控制栏 - 修复版本"""
                     self.control_visible = True
                     if hasattr(self, "control_bar") and self.control_bar:
-                        self.control_bar.setVisible(True)
+                        self.control_bar.show()
                         self.control_bar.raise_()
+                        self._update_control_bar_geometry()
+
+                    # 全屏时设置自动隐藏
                     if self.state.is_fullscreen:
-                        self.hide_timer.start(3000)
+                        if hasattr(self, "hide_timer"):
+                            self.hide_timer.start(3000)
+
                     self.setCursor(QCursor(Qt.ArrowCursor))
 
                 def auto_hide_controls(self):
-                    """自动隐藏控制栏"""
-                    if self.state.is_fullscreen:
+                    """自动隐藏控制栏 - 仅在全屏时"""
+                    if self.state.is_fullscreen and self.control_visible:
                         self.control_visible = False
                         if hasattr(self, "control_bar") and self.control_bar:
-                            self.control_bar.setVisible(False)
+                            self.control_bar.hide()
                         self.setCursor(QCursor(Qt.BlankCursor))
-
                 # 事件处理
+
                 def keyPressEvent(self, event):
                     """键盘事件"""
-                    if not self.mpv:
+                    if not self.mpv or not self._initialized:
                         super().keyPressEvent(event)
                         return
 
@@ -1402,12 +1797,20 @@ class BiliDownloader(QWidget):
                         self.set_pause(not self.mpv.pause)
                     elif key == Qt.Key_Left:
                         self.mpv.seek(-10, reference="relative")
+                        self.status_label.setText("快退 10秒")
+                        self.status_label.show()
+                        QTimer.singleShot(1000, self.status_label.hide)
                     elif key == Qt.Key_Right:
                         self.mpv.seek(10, reference="relative")
+                        self.status_label.setText("快进 10秒")
+                        self.status_label.show()
+                        QTimer.singleShot(1000, self.status_label.hide)
                     elif key == Qt.Key_Up:
-                        self.set_volume(min(self.mpv.volume + 5, 100))
+                        new_vol = min(self.mpv.volume + 5, 100)
+                        self.set_volume(new_vol)
                     elif key == Qt.Key_Down:
-                        self.set_volume(max(self.mpv.volume - 5, 0))
+                        new_vol = max(self.mpv.volume - 5, 0)
+                        self.set_volume(new_vol)
                     elif key == Qt.Key_M:  # 静音切换
                         current_vol = self.mpv.volume or 0
                         if current_vol > 0:
@@ -1416,8 +1819,6 @@ class BiliDownloader(QWidget):
                         else:
                             restore_vol = getattr(self, "_last_volume", 50)
                             self.set_volume(restore_vol)
-                    elif key == Qt.Key_H:  # 显示帮助
-                        self.show_help_overlay()
                     else:
                         super().keyPressEvent(event)
 
@@ -1441,22 +1842,25 @@ class BiliDownloader(QWidget):
                         self.toggle_fullscreen()
                     super().mouseDoubleClickEvent(event)
 
+                # 同时修复鼠标事件处理
                 def mouseMoveEvent(self, event):
-                    """鼠标移动事件"""
-                    self.show_controls()
+                    """鼠标移动事件 - 全屏时显示控制栏"""
+                    if self.state.is_fullscreen:
+                        self.show_controls()
                     super().mouseMoveEvent(event)
 
                 def wheelEvent(self, event):
                     """鼠标滚轮事件"""
-                    if self.mpv:
+                    if self.mpv and self._initialized:
                         delta = event.angleDelta().y()
                         volume_change = 5 if delta > 0 else -5
-                        new_volume = max(0, min(100, self.mpv.volume + volume_change))
+                        new_volume = max(
+                            0, min(100, self.mpv.volume + volume_change))
                         self.set_volume(new_volume)
                     event.accept()
 
                 def toggle_fullscreen(self):
-                    """切换全屏"""
+                    """切换全屏状态 - 改进版本"""
                     if self.state.is_fullscreen:
                         self.exit_fullscreen()
                     else:
@@ -1913,7 +2317,8 @@ class BiliDownloader(QWidget):
             """
             )
             intro_text.setMinimumHeight(100)  # 设置最小高度
-            intro_text.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+            intro_text.setSizePolicy(
+                QSizePolicy.Expanding, QSizePolicy.Expanding)
 
             intro_scroll.setWidget(intro_text)
             intro_layout.addWidget(intro_scroll)
@@ -2075,7 +2480,8 @@ class BiliDownloader(QWidget):
         total_time_label = control_bar.findChild(QLabel, "total_time")
         volume_btn = control_bar.findChild(QPushButton, "volume_button")
         volume_slider = control_bar.findChild(QSlider, "volume_slider")
-        fullscreen_btn = control_bar.findChild(QPushButton, "fullscreen_button")
+        fullscreen_btn = control_bar.findChild(
+            QPushButton, "fullscreen_button")
 
         if not all(
             [
@@ -2188,45 +2594,88 @@ class BiliDownloader(QWidget):
         video_widget.on_loading_update = show_loading
 
     def setup_episode_events(self, video_widget, episode_section, eps):
-        """设置分集事件"""
+        """设置分集事件 - 在当前播放器中播放"""
 
         def on_episode_clicked(ep_idx_clicked):
             ep_btns = episode_section.episode_buttons  # 在函数内部获取
+
+            # 更新按钮选中状态
             for i, btn_ep in enumerate(ep_btns):
                 btn_ep.setChecked(i == ep_idx_clicked)
+
+            # 在当前播放器中播放视频
             if eps and 0 <= ep_idx_clicked < len(eps):
-                # 弹出QML播放器弹窗
-                self.show_qml_player(eps[ep_idx_clicked][2])
+                episode_title, play_url, real_video_url = eps[ep_idx_clicked]
+
+                # 确保视频控件存在且MPV已初始化
+                if hasattr(video_widget, 'mpv') and video_widget.mpv:
+                    try:
+                        # 显示加载状态
+                        if hasattr(video_widget, 'on_loading_update') and video_widget.on_loading_update:
+                            video_widget.on_loading_update(True)
+
+                        # 播放视频
+                        print(f"播放第 {ep_idx_clicked + 1} 集: {episode_title}")
+                        print(f"视频链接: {real_video_url}")
+
+                        video_widget.play(real_video_url)
+
+                        # 更新窗口标题（如果有父对话框）
+                        if hasattr(video_widget, 'parent_dialog') and video_widget.parent_dialog:
+                            original_title = video_widget.parent_dialog.windowTitle()
+                            if " - " in original_title:
+                                anime_name = original_title.split(" - ")[0]
+                            else:
+                                anime_name = original_title
+                            video_widget.parent_dialog.setWindowTitle(
+                                f"{anime_name} - {episode_title}")
+
+                    except Exception as e:
+                        print(f"播放失败: {e}")
+                        QMessageBox.warning(video_widget, "播放错误", f"播放失败: {e}")
+                        if hasattr(video_widget, 'on_loading_update') and video_widget.on_loading_update:
+                            video_widget.on_loading_update(False)
+                else:
+                    QMessageBox.warning(video_widget, "播放器错误", "播放器未就绪，请稍后再试")
 
         def create_episode_handler(episode_idx_handler):
             return lambda checked=False: on_episode_clicked(episode_idx_handler)
 
+        # 绑定所有分集按钮的点击事件
         ep_btns = episode_section.episode_buttons
         for i_btn, btn_item in enumerate(ep_btns):
             btn_item.clicked.connect(create_episode_handler(i_btn))
 
+        # 默认播放第一集
         if eps and ep_btns:  # 确保都不为空
             ep_btns[0].setChecked(True)
-            video_widget.play(eps[0][2])  # Play first episode
 
-            # 修复：正确获取音量滑块
-            if hasattr(video_widget, "mpv") and video_widget.mpv:
-                # 从父级窗口查找音量滑块
-                dialog = (
-                    video_widget.parent_dialog
-                    if hasattr(video_widget, "parent_dialog")
-                    else None
-                )
-                if dialog:
-                    volume_slider = dialog.findChild(QSlider, "volume_slider")
-                    if volume_slider:
-                        video_widget.set_volume(volume_slider.value())
+            # 延迟播放第一集，确保MPV已完全初始化
+            def play_first_episode():
+                if hasattr(video_widget, 'mpv') and video_widget.mpv:
+                    try:
+                        first_episode = eps[0]
+                        print(f"自动播放第一集: {first_episode[0]}")
+                        video_widget.play(first_episode[2])
+
+                        # 设置初始音量
+                        if hasattr(video_widget, "parent_dialog"):
+                            dialog = video_widget.parent_dialog
+                            volume_slider = dialog.findChild(
+                                QSlider, "volume_slider")
+                            if volume_slider:
+                                video_widget.set_volume(volume_slider.value())
+
+                    except Exception as e:
+                        print(f"自动播放第一集失败: {e}")
+
+            # 延迟2秒后播放，确保MPV完全初始化
+            QTimer.singleShot(2000, play_first_episode)
 
     def setup_line_events(
         self, video_widget, info_section, anime_id, lines, episode_section
     ):
-        """设置线路切换事件"""
-        from PyQt5.QtWidgets import QScrollArea, QPushButton
+        """设置线路切换事件 - PySide6版本"""
         import sqlite3
 
         line_combo = info_section.findChild(QComboBox, "line_selector")
@@ -2237,7 +2686,6 @@ class BiliDownloader(QWidget):
             if 0 <= line_idx_changed < len(lines):
                 line_id = lines[line_idx_changed]
 
-                # 使用 with 语句确保数据库连接正确关闭
                 try:
                     with sqlite3.connect("anime.db") as conn:
                         c = conn.cursor()
@@ -2264,18 +2712,14 @@ class BiliDownloader(QWidget):
                     return
 
                 # 清理旧按钮
-                old_buttons = (
-                    episode_section.episode_buttons
-                    if hasattr(episode_section, "episode_buttons")
-                    else []
-                )
+                old_buttons = getattr(episode_section, "episode_buttons", [])
                 for btn_old in old_buttons:
                     btn_old.setParent(None)
                     btn_old.deleteLater()
 
                 # 创建新按钮列表
                 new_buttons = []
-                columns = 6  # 每行6个按钮
+                columns = 5
 
                 # 创建新按钮
                 for i_new_ep, (ep_title_new, play_url_new, real_url_new) in enumerate(
@@ -2283,18 +2727,18 @@ class BiliDownloader(QWidget):
                 ):
                     btn_new = QPushButton(ep_title_new)
                     btn_new.setCheckable(True)
-                    btn_new.setMinimumSize(120, 50)
-                    btn_new.setMaximumSize(150, 60)
+                    btn_new.setMinimumSize(100, 40)
+                    btn_new.setMaximumSize(150, 50)
                     btn_new.setObjectName(f"episode_button_{i_new_ep}")
                     btn_new.setStyleSheet(
                         """
                         QPushButton {
                             background: #ffffff;
                             border: 2px solid #00a1d6;
-                            border-radius: 8px;
-                            padding: 8px 12px;
+                            border-radius: 6px;
+                            padding: 6px 10px;
                             color: #00a1d6;
-                            font-size: 14px;
+                            font-size: 12px;
                             font-weight: bold;
                             text-align: center;
                         }
@@ -2333,15 +2777,15 @@ class BiliDownloader(QWidget):
                     episode_layout.addWidget(btn_new, row, col)
                     new_buttons.append(btn_new)
 
-            # 更新 episode_section 的按钮引用
-            episode_section.episode_buttons = new_buttons
+                # 更新 episode_section 的按钮引用
+                episode_section.episode_buttons = new_buttons
 
-            # 默认选中第一集并播放
-            if new_eps and new_buttons:
-                new_buttons[0].setChecked(True)
-                video_widget.play(new_eps[0][2])
+                # 默认选中第一集并播放
+                if new_eps and new_buttons:
+                    new_buttons[0].setChecked(True)
+                    video_widget.play(new_eps[0][2])
 
-        # 连接信号
+        # 连接信号 - PySide6语法
         line_combo.currentIndexChanged.connect(change_line)
 
     def setup_state_management(
@@ -2527,9 +2971,6 @@ class BiliDownloader(QWidget):
         self.cover_label.setAlignment(Qt.AlignCenter)
         content.addWidget(self.cover_label, alignment=Qt.AlignCenter)
 
-        # 加一个弹性空间，推开下方按钮
-        from PyQt5.QtWidgets import QSpacerItem, QSizePolicy
-
         content.addSpacerItem(
             QSpacerItem(20, 20, QSizePolicy.Minimum, QSizePolicy.Expanding)
         )
@@ -2560,8 +3001,10 @@ class BiliDownloader(QWidget):
         content.addWidget(self.queue_btn)
 
         # 设置按钮
-        self.download_manager_btn = QPushButton("下载管理" if self.is_cn else "Manager")
-        self.download_manager_btn.setIcon(QIcon("folder.png"))  # 使用folder.png图标
+        self.download_manager_btn = QPushButton(
+            "下载管理" if self.is_cn else "Manager")
+        self.download_manager_btn.setIcon(
+            QIcon("folder.png"))  # 使用folder.png图标
         self.download_manager_btn.setIconSize(QSize(20, 20))
         self.download_manager_btn.clicked.connect(self.show_download_manager)
         content.addWidget(self.download_manager_btn)
@@ -2614,11 +3057,10 @@ class BiliDownloader(QWidget):
         if hasattr(self, "search_timer"):
             self.search_timer.stop()
 
-        from PyQt5.QtCore import QTimer
-
         self.search_timer = QTimer()
         self.search_timer.setSingleShot(True)
-        self.search_timer.timeout.connect(lambda: self.perform_search(search_text))
+        self.search_timer.timeout.connect(
+            lambda: self.perform_search(search_text))
         self.search_timer.start(300)  # 300ms 延迟
 
     def perform_search(self, search_text):
@@ -2628,8 +3070,11 @@ class BiliDownloader(QWidget):
         self.load_anime_data()
 
     def load_anime_data(self):
-        """加载动漫数据"""
-        from PyQt5.QtCore import QThread, pyqtSignal
+        """加载动漫数据 - 修复线程管理"""
+        if self._is_closing:  # 如果正在关闭，不启动新线程
+            return
+
+        from PySide6.QtCore import QThread, Signal
 
         # 显示加载状态
         self.show_loading_state()
@@ -2637,26 +3082,31 @@ class BiliDownloader(QWidget):
         # 如果有正在运行的加载线程，先停止它
         if hasattr(self, "loader_thread") and self.loader_thread.isRunning():
             self.loader_thread.quit()
-            self.loader_thread.wait()
+            self.loader_thread.wait(1000)
 
         # 创建新的加载线程
         class AnimeLoader(QThread):
-            data_loaded = pyqtSignal(list, int)  # 添加总数参数
-            error_occurred = pyqtSignal(str)
+            data_loaded = Signal(list, int)
+            error_occurred = Signal(str)
 
-            def __init__(self, page=1, search_text=""):
-                super().__init__()
+            def __init__(self, page=1, search_text="", parent=None):
+                super().__init__(parent)
                 self.page = page
                 self.search_text = search_text
+                self.is_cancelled = False
 
             def run(self):
+                if self.is_cancelled:
+                    return
+
                 try:
                     import sqlite3
                     import os
 
                     # 检查数据库文件是否存在
                     if not os.path.exists("anime.db"):
-                        self.error_occurred.emit("数据库文件不存在")
+                        if not self.is_cancelled:
+                            self.error_occurred.emit("数据库文件不存在")
                         return
 
                     conn = sqlite3.connect("anime.db")
@@ -2665,6 +3115,10 @@ class BiliDownloader(QWidget):
                     # 分页参数
                     page_size = 20
                     offset = (self.page - 1) * page_size
+
+                    if self.is_cancelled:
+                        conn.close()
+                        return
 
                     # 首先查询总数
                     if self.search_text:
@@ -2677,9 +3131,12 @@ class BiliDownloader(QWidget):
 
                     total_count = c.fetchone()[0]
 
+                    if self.is_cancelled:
+                        conn.close()
+                        return
+
                     # 然后查询当前页数据
                     if self.search_text:
-                        # 搜索查询
                         c.execute(
                             """
                             SELECT DISTINCT id, name, cover, intro 
@@ -2691,7 +3148,6 @@ class BiliDownloader(QWidget):
                             (f"%{self.search_text}%", page_size, offset),
                         )
                     else:
-                        # 普通分页查询
                         c.execute(
                             """
                             SELECT DISTINCT id, name, cover, intro 
@@ -2705,10 +3161,15 @@ class BiliDownloader(QWidget):
                     results = c.fetchall()
                     conn.close()
 
-                    self.data_loaded.emit(results, total_count)
+                    if not self.is_cancelled:
+                        self.data_loaded.emit(results, total_count)
 
                 except Exception as e:
-                    self.error_occurred.emit(f"数据库查询失败: {str(e)}")
+                    if not self.is_cancelled:
+                        self.error_occurred.emit(f"数据库查询失败: {str(e)}")
+
+            def cancel(self):
+                self.is_cancelled = True
 
         # 初始化分页变量
         if not hasattr(self, "current_page"):
@@ -2716,16 +3177,25 @@ class BiliDownloader(QWidget):
 
         # 创建并启动加载线程
         search_text = getattr(self, "current_search", "")
-        self.loader_thread = AnimeLoader(self.current_page, search_text)
+        self.loader_thread = AnimeLoader(self.current_page, search_text, self)
+
+        # 连接信号
         self.loader_thread.data_loaded.connect(self.on_anime_data_loaded)
         self.loader_thread.error_occurred.connect(self.on_load_error)
+
+        # 添加到活动线程列表
+        self.active_threads.append(self.loader_thread)
+
+        # 线程完成时从列表中移除
+        def on_thread_finished():
+            if self.loader_thread in self.active_threads:
+                self.active_threads.remove(self.loader_thread)
+
+        self.loader_thread.finished.connect(on_thread_finished)
         self.loader_thread.start()
 
     def show_loading_state(self):
         """显示加载状态"""
-        from PyQt5.QtWidgets import QVBoxLayout, QLabel
-        from PyQt5.QtCore import Qt
-        from PyQt5.QtGui import QFont
 
         # 检查容器是否存在
         if not hasattr(self, "anime_container") or not self.anime_container:
@@ -2739,7 +3209,8 @@ class BiliDownloader(QWidget):
                 if child.widget():
                     child.widget().deleteLater()
         else:
-            layout = QVBoxLayout(self.anime_container)
+            layout = QVBoxLayout()  # 修复这里
+            self.anime_container.setLayout(layout)  # 设置布局
 
         # 添加加载标签
         loading_label = QLabel("加载中...")
@@ -2770,9 +3241,6 @@ class BiliDownloader(QWidget):
 
     def on_load_error(self, error_msg):
         """加载错误处理回调"""
-        from PyQt5.QtWidgets import QVBoxLayout, QLabel
-        from PyQt5.QtCore import Qt
-        from PyQt5.QtGui import QFont
 
         if not hasattr(self, "anime_container") or not self.anime_container:
             return
@@ -2785,7 +3253,8 @@ class BiliDownloader(QWidget):
                 if child.widget():
                     child.widget().deleteLater()
         else:
-            layout = QVBoxLayout(self.anime_container)
+            layout = QVBoxLayout()  # 修复这里
+            self.anime_container.setLayout(layout)  # 设置布局
 
         # 显示错误信息
         error_label = QLabel(f"加载失败: {error_msg}")
@@ -2807,9 +3276,6 @@ class BiliDownloader(QWidget):
 
     def display_anime_grid(self, anime_list):
         """显示动漫网格"""
-        from PyQt5.QtWidgets import QGridLayout, QWidget, QLabel
-        from PyQt5.QtCore import Qt
-        from PyQt5.QtGui import QFont
 
         if not hasattr(self, "anime_container") or not self.anime_container:
             return
@@ -2822,9 +3288,8 @@ class BiliDownloader(QWidget):
                 if child.widget():
                     child.widget().deleteLater()
         else:
-            from PyQt5.QtWidgets import QVBoxLayout
-
-            layout = QVBoxLayout(self.anime_container)
+            layout = QVBoxLayout()  # 修复这里
+            self.anime_container.setLayout(layout)
             layout.setAlignment(Qt.AlignTop)
 
         if not anime_list:
@@ -2850,7 +3315,8 @@ class BiliDownloader(QWidget):
             return
 
         # 保存数据供详情页使用
-        self._db_anime_data = [(item[0], item[1], item[2]) for item in anime_list]
+        self._db_anime_data = [(item[0], item[1], item[2])
+                               for item in anime_list]
 
         # 创建网格布局
         grid_widget = QWidget()
@@ -2876,12 +3342,12 @@ class BiliDownloader(QWidget):
         layout.addWidget(grid_widget)
 
     def create_anime_card(self, anime_id, name, cover_url, intro):
-        """创建动漫卡片"""
-        from PyQt5.QtWidgets import QWidget, QVBoxLayout, QLabel
-        from PyQt5.QtCore import Qt, QThread, pyqtSignal
-        from PyQt5.QtGui import QPixmap, QIcon, QFont
+        """创建动漫卡片 - 修复图片加载线程管理"""
         from urllib.request import urlopen
         import weakref
+
+        if self._is_closing:  # 如果正在关闭，不创建新卡片
+            return QWidget()
 
         card = QWidget()
         card.setFixedSize(200, 280)
@@ -2898,7 +3364,8 @@ class BiliDownloader(QWidget):
         """
         )
 
-        layout = QVBoxLayout(card)
+        layout = QVBoxLayout()
+        card.setLayout(layout)
         layout.setContentsMargins(10, 10, 10, 10)
         layout.setSpacing(5)
 
@@ -2913,30 +3380,36 @@ class BiliDownloader(QWidget):
 
         layout.addWidget(poster_label)
 
-        # 异步加载图片
+        # 异步加载图片 - 修复线程管理
         class ImageLoader(QThread):
-            image_loaded = pyqtSignal(QPixmap)
-            load_failed = pyqtSignal()
+            image_loaded = Signal(QPixmap)
+            load_failed = Signal()
 
-            def __init__(self, url, label_ref):
+            def __init__(self, url, label_ref, parent_ref):
                 super().__init__()
                 self.url = url
                 self.label_ref = label_ref
+                self.parent_ref = parent_ref  # 保存父组件引用
                 self.is_cancelled = False
 
             def run(self):
                 try:
-                    if self.is_cancelled or not self.url or not self.url.strip():
-                        self.load_failed.emit()
+                    # 检查父组件是否还存在
+                    parent = self.parent_ref()
+                    if not parent or parent._is_closing:
                         return
 
-                    # 添加请求头避免403错误
+                    if self.is_cancelled or not self.url or not self.url.strip():
+                        if not self.is_cancelled:
+                            self.load_failed.emit()
+                        return
+
                     import urllib.request
 
                     req = urllib.request.Request(
                         self.url,
                         headers={
-                            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+                            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
                             "Referer": "https://www.bilibili.com/",
                             "Accept": "image/webp,image/apng,image/*,*/*;q=0.8",
                         },
@@ -2968,37 +3441,45 @@ class BiliDownloader(QWidget):
                 self.is_cancelled = True
 
         def on_image_loaded(pixmap):
-            label = poster_label_ref()  # 获取弱引用的对象
-            if label is not None:  # 检查对象是否还存在
+            label = poster_label_ref()
+            if label is not None:
                 try:
                     label.setPixmap(pixmap)
                     label.setText("")
                 except RuntimeError:
-                    # 对象已被删除，忽略
                     pass
 
         def on_load_failed():
-            label = poster_label_ref()  # 获取弱引用的对象
-            if label is not None:  # 检查对象是否还存在
+            label = poster_label_ref()
+            if label is not None:
                 try:
                     label.setText("无封面")
                     original_style = label.styleSheet()
                     if "color:" not in original_style:
                         label.setStyleSheet(original_style + "color: #999;")
                 except RuntimeError:
-                    # 对象已被删除，忽略
                     pass
 
-        if cover_url:
-            # 创建弱引用以避免循环引用
+        if cover_url and not self._is_closing:
             poster_label_ref = weakref.ref(poster_label)
-            loader = ImageLoader(cover_url, poster_label_ref)
+            parent_ref = weakref.ref(self)  # 创建父组件弱引用
+
+            loader = ImageLoader(cover_url, poster_label_ref, parent_ref)
             loader.image_loaded.connect(on_image_loaded)
             loader.load_failed.connect(on_load_failed)
 
+            # 添加到活动线程列表
+            self.active_threads.append(loader)
+
+            # 线程完成时清理
+            def on_loader_finished():
+                if loader in self.active_threads:
+                    self.active_threads.remove(loader)
+
+            loader.finished.connect(on_loader_finished)
             loader.start()
 
-            # 保存引用避免被垃圾回收，并添加清理机制
+            # 保存引用并添加清理机制
             poster_label._image_loader = loader
 
             # 当卡片被删除时，取消加载线程
@@ -3006,7 +3487,19 @@ class BiliDownloader(QWidget):
                 if hasattr(poster_label, "_image_loader"):
                     poster_label._image_loader.cancel()
                     poster_label._image_loader.quit()
-                    poster_label._image_loader.wait(1000)  # 等待最多1秒
+                    poster_label._image_loader.wait(1000)
+
+            # 重写 card 的 closeEvent
+            original_close_event = card.closeEvent
+
+            def enhanced_close_event(event):
+                cleanup()
+                if original_close_event:
+                    original_close_event(event)
+                else:
+                    event.accept()
+
+            card.closeEvent = enhanced_close_event
 
         else:
             on_load_failed()
@@ -3051,7 +3544,8 @@ class BiliDownloader(QWidget):
     def save_history(self):
         try:
             with open(self.history_path, "w", encoding="utf-8") as f:
-                json.dump(self.download_history, f, ensure_ascii=False, indent=2)
+                json.dump(self.download_history, f,
+                          ensure_ascii=False, indent=2)
         except Exception:
             pass
 
@@ -3261,15 +3755,17 @@ class BiliDownloader(QWidget):
         control_layout.addWidget(stop_btn)
         layout.addLayout(control_layout)
 
-        # 播放器
+        # 播放器 - PySide6版本
         player = QMediaPlayer(dialog)
         player.setVideoOutput(video_widget)
 
         def play_selected():
             row = list_widget.currentRow()
             if row >= 0:
-                path = os.path.join(self.download_path, list_widget.item(row).text())
-                player.setMedia(QMediaContent(QUrl.fromLocalFile(path)))
+                path = os.path.join(self.download_path,
+                                    list_widget.item(row).text())
+                # PySide6 方式设置媒体源
+                player.setSource(QUrl.fromLocalFile(path))
                 player.play()
 
         play_btn.clicked.connect(play_selected)
@@ -3278,7 +3774,7 @@ class BiliDownloader(QWidget):
         stop_btn.clicked.connect(player.stop)
 
         dialog.setLayout(layout)
-        dialog.exec_()
+        dialog.exec()  # PySide6中去掉了下划线
 
     def on_download_error(self, msg):
         reply = QMessageBox.critical(
@@ -3555,7 +4051,8 @@ class BiliDownloader(QWidget):
         hover_filter = HoverFilter(list_widget)
         list_widget.viewport().installEventFilter(hover_filter)
 
-        tab_widget.addTab(downloaded_tab, "已下载视频" if self.is_cn else "Downloaded")
+        tab_widget.addTab(
+            downloaded_tab, "已下载视频" if self.is_cn else "Downloaded")
 
         # 历史记录 Tab
         history_tab = QWidget()
@@ -3600,23 +4097,55 @@ class BiliDownloader(QWidget):
         self.setStyleSheet(self.get_stylesheet())
 
     def closeEvent(self, event):
-        """关闭事件"""
+        """关闭事件 - 修复线程清理"""
         try:
+            # 设置关闭标志
+            self._is_closing = True
+
+            # 停止剪贴板监控
+            if hasattr(self, 'clipboard_timer'):
+                self.clipboard_timer.stop()
+
+            # 清理所有活动线程
+            for thread in self.active_threads[:]:  # 使用副本避免修改列表时的问题
+                if thread and thread.isRunning():
+                    thread.quit()
+                    if not thread.wait(3000):  # 等待3秒
+                        thread.terminate()  # 强制终止
+                        thread.wait(1000)  # 再等1秒
+                    self.active_threads.remove(thread)
+
+            # 清理动漫加载线程
+            if hasattr(self, 'loader_thread') and self.loader_thread.isRunning():
+                self.loader_thread.quit()
+                if not self.loader_thread.wait(3000):
+                    self.loader_thread.terminate()
+                    self.loader_thread.wait(1000)
+
+            # 清理线程池
+            if hasattr(self, 'executor'):
+                self.executor.shutdown(wait=True)
+
             # 停止所有定时器
             if hasattr(self, "hide_timer"):
                 self.hide_timer.stop()
 
             # 清理 MPV
             if hasattr(self, "mpv") and self.mpv:
-                # 保存当前状态
-                if hasattr(self, "state") and self.state:
-                    self.state.last_position = getattr(self.mpv, "time_pos", 0) or 0
-                    self.state.volume = getattr(self.mpv, "volume", 80) or 80
-                    self.state.is_paused = getattr(self.mpv, "pause", True)
+                try:
+                    # 保存当前状态
+                    if hasattr(self, "state") and self.state:
+                        self.state.last_position = getattr(
+                            self.mpv, "time_pos", 0) or 0
+                        self.state.volume = getattr(
+                            self.mpv, "volume", 80) or 80
+                        self.state.is_paused = getattr(self.mpv, "pause", True)
 
-                # 停止播放并清理
-                self.mpv.quit()
-                self.mpv = None
+                    # 停止播放并清理
+                    self.mpv.quit()
+                    self.mpv = None
+                except Exception as e:
+                    print(f"MPV 清理出错: {e}")
 
             # 清理回调函数
             self.on_time_update = None
@@ -3626,9 +4155,9 @@ class BiliDownloader(QWidget):
             self.on_loading_update = None
 
         except Exception as e:
-            print(f"MPV 清理出错: {e}")
+            print(f"关闭时清理出错: {e}")
         finally:
-            super().closeEvent(event)
+            event.accept()
 
     def toggle_lang(self):
         self.is_cn = not self.is_cn
@@ -3654,7 +4183,8 @@ class BiliDownloader(QWidget):
         if self.is_cn:
             self.quality_box.addItems(["自动(最高)", "仅视频", "仅音频"])
         else:
-            self.quality_box.addItems(["Auto (Best)", "Video Only", "Audio Only"])
+            self.quality_box.addItems(
+                ["Auto (Best)", "Video Only", "Audio Only"])
         self.setStyleSheet(self.get_stylesheet())
 
     def show_theme_market(self):
@@ -3752,7 +4282,6 @@ class BiliDownloader(QWidget):
             QMessageBox.warning(self, "错误", f"下载主题失败: {e}")
 
     def upload_theme(self):
-        from PyQt5.QtWidgets import QFileDialog
 
         file_path, _ = QFileDialog.getOpenFileName(
             self, "选择主题文件", "", "主题文件 (*.theme)"
@@ -3765,7 +4294,6 @@ class BiliDownloader(QWidget):
                 QMessageBox.warning(self, "错误", f"上传主题失败: {e}")
 
     def import_theme(self):
-        from PyQt5.QtWidgets import QFileDialog
 
         file_path, _ = QFileDialog.getOpenFileName(
             self, "选择主题文件", "", "主题文件 (*.theme)"
@@ -3778,7 +4306,6 @@ class BiliDownloader(QWidget):
                 QMessageBox.warning(self, "错误", f"导入主题失败：{e}")
 
     def export_theme(self):
-        from PyQt5.QtWidgets import QFileDialog
 
         file_path, _ = QFileDialog.getSaveFileName(
             self, "保存主题文件", "", "主题文件 (*.theme)"
@@ -3817,7 +4344,6 @@ class BiliDownloader(QWidget):
 
     def darken_color(self, color, factor=0.8):
         # 将颜色变暗
-        from PyQt5.QtGui import QColor
 
         c = QColor(color)
         return c.darker(int(255 * factor)).name()
@@ -3839,7 +4365,6 @@ class BiliDownloader(QWidget):
         path_btn = QPushButton("选择文件夹" if self.is_cn else "Browse")
 
         def choose_folder():
-            from PyQt5.QtWidgets import QFileDialog
 
             folder = QFileDialog.getExistingDirectory(
                 dialog,
@@ -3870,7 +4395,8 @@ class BiliDownloader(QWidget):
         template_label = QLabel(
             "文件命名模板：" if self.is_cn else "Filename Template:"
         )
-        template_edit = QLineEdit(getattr(self, "filename_template", "{title}"))
+        template_edit = QLineEdit(
+            getattr(self, "filename_template", "{title}"))
         template_edit.setPlaceholderText("{title}、{up主}、{date} 可用")
         layout.addWidget(template_label)
         layout.addWidget(template_edit)
@@ -3921,7 +4447,8 @@ class BiliDownloader(QWidget):
         theme_layout = QVBoxLayout(theme_tab)
 
         # 主题市场按钮
-        theme_market_btn = QPushButton("主题市场" if self.is_cn else "Theme Market")
+        theme_market_btn = QPushButton(
+            "主题市场" if self.is_cn else "Theme Market")
         theme_market_btn.setIcon(QIcon("theme.png"))
         theme_market_btn.clicked.connect(self.show_theme_market)
         theme_layout.addWidget(theme_market_btn)
@@ -4013,7 +4540,8 @@ class BiliDownloader(QWidget):
         w, h = rect.width(), rect.height()
         center = rect.center()
         new_w, new_h = int(w * scale), int(h * scale)
-        new_rect = QRect(center.x() - new_w // 2, center.y() - new_h // 2, new_w, new_h)
+        new_rect = QRect(center.x() - new_w // 2,
+                         center.y() - new_h // 2, new_w, new_h)
         anim.setDuration(100)
         anim.setStartValue(rect)
         anim.setEndValue(new_rect)
@@ -4192,7 +4720,8 @@ class BiliDownloader(QWidget):
         for name in control_names:
             if isinstance(name, tuple):
                 control_type, object_name = name
-                controls[object_name] = parent.findChild(control_type, object_name)
+                controls[object_name] = parent.findChild(
+                    control_type, object_name)
             else:
                 controls[name] = (
                     parent.findChild(QPushButton, name)
@@ -4224,9 +4753,7 @@ class BiliDownloader(QWidget):
                     self.cleanup_layout(child.layout())
 
 
-from PySide6.QtCore import QUrl, QObject, Slot, Property, Signal
-from PySide6.QtGui import QGuiApplication
-from PySide6.QtQml import QQmlApplicationEngine
+# 在文件顶部导入PySide6 QML组件
 
 
 class MpvBridge(QObject):
@@ -4236,7 +4763,7 @@ class MpvBridge(QObject):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._player = mpv.MPV(log_handler=print, loglevel="warn")  # 去掉 wid=None
+        self._player = mpv.MPV(log_handler=print, loglevel="warn")
         self._player.observe_property("time-pos", self._on_position)
         self._player.observe_property("duration", self._on_duration)
         self._player.observe_property("pause", self._on_pause)
@@ -4295,7 +4822,7 @@ def is_network_available():
 
 if __name__ == "__main__":
     try:
-        # 在创建QApplication之前设置属性
+        # 在创建QApplication之前设置属性 - PySide6版本
         QApplication.setAttribute(Qt.AA_UseSoftwareOpenGL, True)
         QApplication.setAttribute(Qt.AA_UseDesktopOpenGL, False)
         QApplication.setAttribute(Qt.AA_UseOpenGLES, False)
@@ -4314,8 +4841,8 @@ if __name__ == "__main__":
         # 显示窗口
         window.show()
 
-        # 启动事件循环
-        sys.exit(app.exec_())
+        # 启动事件循环 - PySide6中exec()没有下划线
+        sys.exit(app.exec())
 
     except Exception as e:
         print(f"程序启动失败: {e}")

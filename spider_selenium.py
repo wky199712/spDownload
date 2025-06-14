@@ -10,6 +10,7 @@ import sqlite3
 from urllib.parse import urljoin, unquote, urlparse, parse_qs
 import traceback
 
+
 def fetch_real_video_url(driver, play_url):
     """
     用selenium获取分集真实视频源，driver由外部统一创建和管理
@@ -55,6 +56,7 @@ def fetch_real_video_url(driver, play_url):
     driver.switch_to.default_content()
     return real_video_url
 
+
 if __name__ == "__main__":
     # 下面所有采集、driver初始化、数据库操作等都放到这里
     base_url = "http://www.yhdm95.com"
@@ -68,14 +70,18 @@ if __name__ == "__main__":
     chrome_options.add_argument('--disable-gpu')
     chrome_options.add_argument('--no-sandbox')
     chrome_options.add_argument('--window-size=1920,1080')
-    chrome_options.add_argument("--disable-blink-features=AutomationControlled")
-    chrome_options.add_experimental_option('excludeSwitches', ['enable-automation'])
+    chrome_options.add_argument(
+        "--disable-blink-features=AutomationControlled")
+    chrome_options.add_experimental_option(
+        'excludeSwitches', ['enable-automation'])
     chrome_options.add_experimental_option('useAutomationExtension', False)
     chrome_options.add_argument('--ignore-certificate-errors')
-    chrome_options.add_argument("--user-data-dir=C:/Temp/selenium_profile_cookie_test")
+    chrome_options.add_argument(
+        "--user-data-dir=C:/Temp/selenium_profile_cookie_test")
     # chrome_options.add_argument('--host-resolver-rules=MAP www.yhdm95.com 127.0.0.1,EXCLUDE localhost')  # 删除或注释掉这一行
     chrome_options.add_argument('--ignore-urlfetcher-cert-requests')
-    chrome_options.add_argument('--disable-features=StrictOriginIsolation,UpgradeInsecureRequests,BlockInsecurePrivateNetworkRequests,HTTPS-First-Mode')
+    chrome_options.add_argument(
+        '--disable-features=StrictOriginIsolation,UpgradeInsecureRequests,BlockInsecurePrivateNetworkRequests,HTTPS-First-Mode')
     chrome_options.add_argument('--disable-web-security')
     chrome_options.add_argument('--allow-running-insecure-content')
     chrome_options.add_argument('--disable-site-isolation-trials')
@@ -103,7 +109,8 @@ if __name__ == "__main__":
                 print(f"第{attempt+1}次尝试加载页面...")
                 try:
                     WebDriverWait(driver, 8).until(
-                        EC.presence_of_element_located((By.CSS_SELECTOR, ".main li"))
+                        EC.presence_of_element_located(
+                            (By.CSS_SELECTOR, ".main li"))
                     )
                     html = driver.page_source
                     soup = BeautifulSoup(html, "html.parser")
@@ -131,7 +138,8 @@ if __name__ == "__main__":
                     if not href.endswith('/'):
                         href += '/'
                 img_tag = li.find("img")
-                cover = img_tag.get("data-original") or img_tag.get("src") or "" if img_tag else ""
+                cover = img_tag.get(
+                    "data-original") or img_tag.get("src") or "" if img_tag else ""
                 print(f"当前页码: {page}, 当前动漫: {name}, href: {href}")
                 print("查重用name:", repr(name), "href:", repr(href))
                 c.execute("SELECT id FROM anime WHERE href=?", (href,))
@@ -144,13 +152,15 @@ if __name__ == "__main__":
                 detail_url = base_url + href
                 driver.get(detail_url)
                 WebDriverWait(driver, 12).until(
-                    EC.presence_of_element_located((By.CSS_SELECTOR, "ul[id^='ul_playlist_']"))
+                    EC.presence_of_element_located(
+                        (By.CSS_SELECTOR, "ul[id^='ul_playlist_']"))
                 )
                 detail_html = driver.page_source
                 detail_soup = BeautifulSoup(detail_html, "html.parser")
                 intro_tag = detail_soup.select_one(".info-intro")
                 if not intro_tag:
-                    intro_tag = detail_soup.select_one(".des2") or detail_soup.select_one(".des1")
+                    intro_tag = detail_soup.select_one(
+                        ".des2") or detail_soup.select_one(".des1")
                 intro_text = intro_tag.text.strip() if intro_tag else ""
 
                 # 提取地区、年份、总集数
@@ -166,13 +176,15 @@ if __name__ == "__main__":
                     elif "年代" in dd.text:
                         year = txt
                     elif "更新至" in dd.text and "集" in dd.text:
-                        total_eps = txt.replace("更新至", "").replace("集", "").strip()
+                        total_eps = txt.replace(
+                            "更新至", "").replace("集", "").strip()
                 type_links = detail_soup.select("div.info a")
                 type_list = [a.get_text(strip=True) for a in type_links]
                 type_str = ",".join(type_list)
                 intro_tag = detail_soup.select_one(".info-intro")
                 if not intro_tag:
-                    intro_tag = detail_soup.select_one(".des2") or detail_soup.select_one(".des1")
+                    intro_tag = detail_soup.select_one(
+                        ".des2") or detail_soup.select_one(".des1")
                 if intro_tag:
                     b_tag = intro_tag.find("b")
                     if b_tag:
@@ -184,7 +196,8 @@ if __name__ == "__main__":
                 try:
                     c.execute(
                         "INSERT INTO anime (name, href, cover, intro, year, area, type, total_eps) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-                        (name, href, cover, intro_text, year, area, type_str, total_eps)
+                        (name, href, cover, intro_text,
+                         year, area, type_str, total_eps)
                     )
                     anime_id = c.lastrowid
                     conn.commit()
@@ -216,9 +229,11 @@ if __name__ == "__main__":
                     play_url = urljoin(base_url, ep_href)
                     driver.get(play_url)
                     WebDriverWait(driver, 8).until(
-                        EC.presence_of_element_located((By.CSS_SELECTOR, "li[id^='tab']"))
+                        EC.presence_of_element_located(
+                            (By.CSS_SELECTOR, "li[id^='tab']"))
                     )
-                    tab_lis = driver.find_elements(By.CSS_SELECTOR, "li[id^='tab']")
+                    tab_lis = driver.find_elements(
+                        By.CSS_SELECTOR, "li[id^='tab']")
                     tab_info_list = []
                     for tab_li in tab_lis:
                         tab_id = tab_li.get_attribute("id")
@@ -227,14 +242,25 @@ if __name__ == "__main__":
 
                     # 线路循环
                     for tab_idx, tab_info in enumerate(tab_info_list):
-                        tab_lis = driver.find_elements(By.CSS_SELECTOR, "li[id^='tab']")
+                        tab_lis = driver.find_elements(
+                            By.CSS_SELECTOR, "li[id^='tab']")
                         if (tab_idx >= len(tab_lis)):
                             print(f"未找到ul: tab_idx={tab_idx}")
                             continue
                         tab_li = tab_lis[tab_idx]
-                        tab_li.click()
+                        try:
+                            if tab_li.is_displayed() and tab_li.is_enabled():
+                                tab_li.click()
+                            else:
+                                driver.execute_script(
+                                    "arguments[0].click();", tab_li)
+                        except Exception as e:
+                            driver.execute_script(
+                                "arguments[0].click();", tab_li)
+                            print(f"tab_li.click()失败，已用JS点击: {e}")
                         time.sleep(1)
-                        ul_elems = driver.find_elements(By.CSS_SELECTOR, "ul[id^='ul_playlist_']")
+                        ul_elems = driver.find_elements(
+                            By.CSS_SELECTOR, "ul[id^='ul_playlist_']")
                         if (tab_idx >= len(ul_elems)):
                             print(f"未找到ul: tab_idx={tab_idx}")
                             continue
@@ -252,8 +278,10 @@ if __name__ == "__main__":
                         for ep_idx2, (ep_title2, ep_href2) in enumerate(ep_list):
                             play_url2 = urljoin(base_url, ep_href2)
                             try:
-                                real_video_url = fetch_real_video_url(driver, play_url2)
-                                print(f"分集:{ep_title2} 线路:{tab_info['name']}({ul_id}) 链接:{play_url2} 视频源:{real_video_url}")
+                                real_video_url = fetch_real_video_url(
+                                    driver, play_url2)
+                                print(
+                                    f"分集:{ep_title2} 线路:{tab_info['name']}({ul_id}) 链接:{play_url2} 视频源:{real_video_url}")
 
                                 try:
                                     c.execute("SELECT id FROM episode WHERE anime_id=? AND title=? AND play_url=? AND line_id=?",
@@ -261,13 +289,16 @@ if __name__ == "__main__":
                                     if not c.fetchone():
                                         c.execute(
                                             "INSERT INTO episode (anime_id, title, play_url, video_src, real_video_url, line_id) VALUES (?, ?, ?, ?, ?, ?)",
-                                            (anime_id, ep_title2, play_url2, real_video_url, real_video_url, ul_id)
+                                            (anime_id, ep_title2, play_url2,
+                                             real_video_url, real_video_url, ul_id)
                                         )
                                         conn.commit()
                                 except Exception as db_e:
-                                    print(f"插入episode表出错: {db_e}，anime_id={anime_id}, title={ep_title2}, play_url={play_url2}, line_id={ul_id}")
+                                    print(
+                                        f"插入episode表出错: {db_e}，anime_id={anime_id}, title={ep_title2}, play_url={play_url2}, line_id={ul_id}")
                             except Exception as e:
-                                print(f"采集失败: {tab_info['name']} {ep_title2} {play_url2}，原因: {e}")
+                                print(
+                                    f"采集失败: {tab_info['name']} {ep_title2} {play_url2}，原因: {e}")
                                 try:
                                     driver.switch_to.default_content()
                                 except Exception:
