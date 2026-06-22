@@ -435,6 +435,15 @@ def format_error(exc):
     return msg
 
 
+def format_bili_error(exc):
+    """格式化错误信息，对 B站错误做分类提示。"""
+    base = format_error(exc)
+    category = classify_bili_error(exc)
+    if category:
+        return f"[{category[0]}] {base}\n→ {category[1]}"
+    return base
+
+
 def extract_output_path(output_detail):
     """从输出详情文本中提取路径。"""
     if not output_detail:
@@ -717,14 +726,14 @@ class PreviewWorker(QThread):
                         self.info_ready.emit(self.request_id, info)
                         return
                     except Exception as fallback_exc:
-                        self.failed.emit(self.request_id, format_error(fallback_exc))
+                        self.failed.emit(self.request_id, format_bili_error(fallback_exc))
                         return
-                self.failed.emit(self.request_id, format_error(exc))
+                self.failed.emit(self.request_id, format_bili_error(exc))
             except Exception as top_exc:
                 write_crash_log(type(top_exc), top_exc, top_exc.__traceback__,
                                 source="PreviewWorker")
                 try:
-                    self.failed.emit(self.request_id, format_error(top_exc))
+                    self.failed.emit(self.request_id, format_bili_error(top_exc))
                 except Exception:
                     pass
 
@@ -932,13 +941,13 @@ class DownloadWorker(QThread):
                                 self.cleanup_temp_files()
                                 break
                             ok = False
-                            err_text = self._format_bili_error(fallback_exc)
+                            err_text = format_bili_error(fallback_exc)
                             self.item_failed.emit(index, err_text)
                             self.log.emit(f"兜底失败: {err_text}")
                             self.emit_history(index, url, "", "failed", err_text, started_at)
                             continue
                     ok = False
-                    err_text = self._format_bili_error(exc)
+                    err_text = format_bili_error(exc)
                     self.item_failed.emit(index, err_text)
                     self.log.emit(f"失败: {err_text}")
                     self.emit_history(index, url, "", "failed", err_text, started_at)
@@ -984,14 +993,6 @@ class DownloadWorker(QThread):
 
     def output_detail(self, outputs):
         return "\n".join(str(o) for o in outputs if o)
-
-    def _format_bili_error(self, exc):
-        """格式化错误信息，对 B站错误做分类提示。"""
-        base = format_error(exc)
-        category = classify_bili_error(exc)
-        if category:
-            return f"[{category[0]}] {base}\n→ {category[1]}"
-        return base
 
     def _output_base_for_danmaku(self, output_detail):
         """从输出详情中提取弹幕文件的基础路径（去掉扩展名）。"""
@@ -1515,6 +1516,68 @@ class QrLoginDialog(QDialog):
         event.accept()
 
 
+# ==================== 可拖拽输入框 ====================
+
+class DroppablePlainTextEdit(QPlainTextEdit):
+    """支持拖拽链接/BV 号到输入框的纯文本编辑器。"""
+
+    def dragEnterEvent(self, event):
+        mime = event.mimeData()
+        if mime.hasText() or mime.hasUrls():
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dragMoveEvent(self, event):
+        mime = event.mimeData()
+        if mime.hasText() or mime.hasUrls():
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
+    def dropEvent(self, event):
+        mime = event.mimeData()
+        texts = []
+        if mime.hasUrls():
+            for url in mime.urls():
+                texts.append(url.toString())
+        elif mime.hasText():
+            texts.append(mime.text())
+        else:
+            event.ignore()
+            return
+
+        dropped = " ".join(texts)
+        candidates = split_inputs(dropped)
+        normalized = []
+        for c in candidates:
+            c = c.strip()
+            if not c:
+                continue
+            # 浏览器拖拽有时会带标题和 URL 一起，取看起来像链接或 BV/av 号的部分
+            if c.startswith("http://") or c.startswith("https://"):
+                normalized.append(c)
+            elif re.fullmatch(r"BV[0-9A-Za-z]{10,}", c) or re.fullmatch(r"[aA][vV]\d+", c):
+                normalized.append(normalize_input(c))
+            else:
+                # 尝试从一行文本中提取 URL
+                m = re.search(r"(https?://\S+)", c)
+                if m:
+                    normalized.append(m.group(1))
+
+        if not normalized:
+            event.ignore()
+            return
+
+        existing = self.toPlainText().strip()
+        new_links = "\n".join(normalized)
+        if existing:
+            self.setPlainText(existing + "\n" + new_links)
+        else:
+            self.setPlainText(new_links)
+        event.acceptProposedAction()
+
+
 # ==================== 主窗口 ====================
 
 class MainWindow(QMainWindow):
@@ -1531,7 +1594,8 @@ class MainWindow(QMainWindow):
         self.preview_timer = QTimer(self)
         self.preview_timer.setSingleShot(True)
         self.preview_timer.timeout.connect(self.start_preview)
-        self.setWindowTitle("Bilibili 视频下载器")
+        self.base_window_title = "Bilibili 视频下载器"
+        self.setWindowTitle(self.base_window_title)
         self.resize(1280, 860)
         self.setMinimumSize(900, 600)
         if (RESOURCE_DIR / "icon.ico").exists():
@@ -1656,9 +1720,10 @@ class MainWindow(QMainWindow):
 
         # 输入卡片
         input_card, input_layout = self.create_card("链接输入")
-        self.input_edit = QPlainTextEdit()
+        self.input_edit = DroppablePlainTextEdit()
         self.input_edit.setPlaceholderText(
             "每行一个链接或 BV 号，也可以用空格/逗号分隔\n"
+            "支持从浏览器直接拖拽链接到此处\n"
             "示例：https://www.bilibili.com/video/BV13x41117TL"
         )
         self.input_edit.setMinimumHeight(80)
@@ -1802,6 +1867,7 @@ class MainWindow(QMainWindow):
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.setAlternatingRowColors(True)
+        self.table.setSortingEnabled(True)
         self.table.setContextMenuPolicy(Qt.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self.show_task_context_menu)
         self.table.doubleClicked.connect(self.on_task_double_clicked)
@@ -1889,6 +1955,7 @@ class MainWindow(QMainWindow):
         self.history_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.history_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.history_table.setAlternatingRowColors(True)
+        self.history_table.setSortingEnabled(True)
         self.history_table.setContextMenuPolicy(Qt.CustomContextMenu)
         self.history_table.customContextMenuRequested.connect(self.show_history_context_menu)
         self.history_table.doubleClicked.connect(self.on_history_double_clicked)
@@ -2034,6 +2101,15 @@ class MainWindow(QMainWindow):
         extra_row.addStretch()
         extra_layout.addLayout(extra_row)
         layout.addWidget(extra_card)
+
+        # 恢复默认设置按钮
+        reset_layout = QHBoxLayout()
+        reset_layout.addStretch()
+        self.reset_settings_btn = QPushButton("恢复默认设置")
+        self.reset_settings_btn.setObjectName("secondaryBtn")
+        self.reset_settings_btn.clicked.connect(self.reset_settings)
+        reset_layout.addWidget(self.reset_settings_btn)
+        layout.addLayout(reset_layout)
 
         layout.addStretch()
         scroll.setWidget(container)
@@ -2336,6 +2412,25 @@ class MainWindow(QMainWindow):
         })
         return settings
 
+    def reset_settings(self):
+        """恢复默认设置并更新 UI。"""
+        ret = QMessageBox.question(
+            self, "恢复默认设置",
+            "确定要恢复默认设置吗？\n当前自定义的下载目录、Cookie 等配置将被重置。",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if ret != QMessageBox.Yes:
+            return
+        self.settings = dict(DEFAULT_SETTINGS)
+        try:
+            save_settings(self.settings)
+        except Exception as exc:
+            QMessageBox.warning(self, "保存失败", f"恢复默认设置后保存失败：\n{format_error(exc)}")
+            return
+        self.apply_settings_to_ui()
+        self.statusBar().showMessage("已恢复默认设置 ✨", 5000)
+
     # ---------- 文件/Cookie 选择 ----------
 
     def choose_download_dir(self):
@@ -2493,6 +2588,7 @@ class MainWindow(QMainWindow):
             return
         self.preview_title_label.setText("解析失败")
         self.preview_note_label.setText(msg)
+        QMessageBox.warning(self, "解析失败", f"无法解析该链接：\n\n{msg}\n\n请检查：\n1. 链接是否正确\n2. 是否需要配置 Cookie\n3. 网络是否连接正常")
 
     def on_preview_finished(self):
         self.preview_btn.setEnabled(True)
@@ -2700,6 +2796,12 @@ class MainWindow(QMainWindow):
             return
         self.settings = self.collect_settings()
         save_settings(self.settings)
+        download_dir = self.settings.get("download_dir") or DEFAULT_DOWNLOAD_DIR
+        try:
+            Path(download_dir).mkdir(parents=True, exist_ok=True)
+        except Exception as e:
+            QMessageBox.warning(self, "目录创建失败", f"无法创建下载目录：\n{download_dir}\n\n{e}")
+            return
         cookie_err = self.check_cookie_settings()
         if cookie_err:
             ret = QMessageBox.question(
@@ -2709,6 +2811,7 @@ class MainWindow(QMainWindow):
             )
             if ret != QMessageBox.Yes:
                 return
+        self.table.setSortingEnabled(False)
         self.table.setRowCount(0)
         for i, url in enumerate(urls):
             url = normalize_input(url)
@@ -2769,14 +2872,20 @@ class MainWindow(QMainWindow):
         self.set_cell(index, 1, "下载中")
         self.set_cell(index, 2, "0%")
         self.statusBar().showMessage(f"下载中: {url}")
+        self.update_window_title()
 
     def on_item_progress(self, index, percent, detail):
         if index >= self.table.rowCount():
             return
         self.set_cell(index, 2, detail)
         if percent >= 0:
-            total_rows = self.table.rowCount() or 1
-            self.progress_bar.setValue(int(percent))
+            # 计算总进度 = 已完成任务数/总数 + 当前任务百分比/总数
+            total = self.table.rowCount() or 1
+            finished = sum(1 for r in range(total) if self.table.item(r, 1) and self.table.item(r, 1).text() in ("完成", "完成（公开视频兜底）"))
+            current = max(0.0, min(100.0, percent)) / 100.0
+            overall = (finished + current) / total * 100
+            self.progress_bar.setValue(int(overall))
+            self.update_window_title()
 
     def on_item_finished(self, index, output_detail, status_text):
         if index >= self.table.rowCount():
@@ -2784,12 +2893,45 @@ class MainWindow(QMainWindow):
         self.set_cell(index, 1, status_text or "完成")
         self.set_cell(index, 2, "100%")
         self.set_cell(index, 3, output_detail)
+        self._update_progress_bar()
+        self.update_window_title()
 
     def on_item_failed(self, index, error):
         if index >= self.table.rowCount():
             return
         self.set_cell(index, 1, "失败")
         self.set_cell(index, 2, error)
+        self._update_progress_bar()
+        self.update_window_title()
+
+    def _update_progress_bar(self):
+        total = self.table.rowCount() or 1
+        finished = sum(1 for r in range(total) if self.table.item(r, 1) and self.table.item(r, 1).text() in ("完成", "完成（公开视频兜底）", "失败"))
+        overall = finished / total * 100
+        self.progress_bar.setValue(int(overall))
+
+    def update_window_title(self):
+        """根据当前下载状态更新窗口标题。"""
+        total = self.table.rowCount()
+        if not total:
+            self.setWindowTitle(self.base_window_title)
+            return
+        running = self.worker and self.worker.isRunning() and not self.worker.cancelled
+        if running:
+            done = sum(1 for r in range(total) if self.table.item(r, 1) and self.table.item(r, 1).text() in ("完成", "完成（公开视频兜底）", "失败"))
+            if self.worker.paused:
+                self.setWindowTitle(f"{self.base_window_title} - 已暂停 ({done}/{total})")
+            else:
+                self.setWindowTitle(f"{self.base_window_title} - 下载中 ({done}/{total})")
+            return
+        failed = sum(1 for r in range(total) if self.table.item(r, 1) and self.table.item(r, 1).text() == "失败")
+        cancelled = sum(1 for r in range(total) if self.table.item(r, 1) and self.table.item(r, 1).text() == "已取消")
+        if cancelled:
+            self.setWindowTitle(f"{self.base_window_title} - 已取消")
+        elif failed:
+            self.setWindowTitle(f"{self.base_window_title} - 完成（有失败）")
+        else:
+            self.setWindowTitle(f"{self.base_window_title} - 全部完成 ✨")
 
     def on_item_history(self, record):
         append_history_record(record)
@@ -2802,12 +2944,38 @@ class MainWindow(QMainWindow):
         self.cancel_btn.setEnabled(False)
         self.pause_btn.setText("暂停一下")
         self.set_controls_enabled(True)
+        self.table.setSortingEnabled(True)
+        self.update_window_title()
+        # 打开目录：取第一个成功任务的目录
+        output_dir = ""
+        for r in range(self.table.rowCount()):
+            detail = self.table.item(r, 3)
+            if detail and detail.text():
+                p = Path(detail.text())
+                if p.exists():
+                    output_dir = str(p.parent)
+                    break
+        if not output_dir:
+            output_dir = self.settings.get("download_dir") or DEFAULT_DOWNLOAD_DIR
         if ok:
             self.progress_bar.setValue(100)
             self.statusBar().showMessage("全部任务完成 ✨")
             self.show_tray_message("下载完成", "全部任务已完成~")
+            reply = QMessageBox.question(
+                self, "下载完成 ✨",
+                f"全部任务已完成！\n下载目录：{output_dir}\n\n是否打开下载目录？",
+                QMessageBox.Open | QMessageBox.No,
+                QMessageBox.Open,
+            )
+            if reply == QMessageBox.Open:
+                open_path_in_explorer(output_dir)
         else:
-            self.statusBar().showMessage("任务结束（有失败或取消）")
+            failed_rows = [r for r in range(self.table.rowCount())
+                           if self.table.item(r, 1) and self.table.item(r, 1).text() == "失败"]
+            msg = "任务结束（有失败或取消）"
+            if failed_rows:
+                msg += f"\n失败任务数：{len(failed_rows)}"
+            self.statusBar().showMessage(msg.replace("\n", " "))
             self.show_tray_message("下载结束", "有任务失败或被取消")
 
     def show_tray_message(self, title, message):
@@ -2822,6 +2990,7 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("正在取消...")
             self.worker.cancel()
             self.cancel_btn.setEnabled(False)
+            self.update_window_title()
 
     def toggle_pause_queue(self):
         if not self.worker:
@@ -2834,12 +3003,14 @@ class MainWindow(QMainWindow):
             self.worker.pause()
             self.pause_btn.setText("继续下载")
             self.statusBar().showMessage("队列已暂停")
+        self.update_window_title()
 
     def on_queue_paused_changed(self, paused):
         if paused:
             self.pause_btn.setText("继续下载")
         else:
             self.pause_btn.setText("暂停一下")
+        self.update_window_title()
 
     def append_log(self, msg):
         ts = time.strftime("%H:%M:%S")
@@ -2994,6 +3165,16 @@ class MainWindow(QMainWindow):
             return None, -1
         return self.history_records[row], row
 
+    def copy_history_link(self, row=None):
+        if row is None:
+            row = self.history_table.currentRow()
+        if row < 0 or row >= len(self.history_records):
+            return
+        url = self.history_records[row].get("url") or ""
+        if url:
+            QApplication.clipboard().setText(url)
+            self.statusBar().showMessage("已复制链接", 3000)
+
     def redownload_history(self):
         record, _ = self.current_history_record()
         if not record:
@@ -3063,6 +3244,7 @@ class MainWindow(QMainWindow):
         row = index.row()
         menu = QMenu(self.history_table)
         act_redownload = menu.addAction("重新下载")
+        act_copy_link = menu.addAction("复制链接")
         act_open = menu.addAction("打开文件")
         act_dir = menu.addAction("打开目录")
         menu.addSeparator()
@@ -3071,6 +3253,9 @@ class MainWindow(QMainWindow):
         if action == act_redownload:
             self.history_table.selectRow(row)
             self.redownload_history()
+        elif action == act_copy_link:
+            self.history_table.selectRow(row)
+            self.copy_history_link(row)
         elif action == act_open:
             self.history_table.selectRow(row)
             self.open_history_file()
