@@ -490,68 +490,84 @@ def open_path_in_explorer(path):
 
 
 def generate_mascot_image(path, size=200):
-    """用 QPainter 绘制一只简单可爱的二次元看板娘 PNG。"""
-    pixmap = QPixmap(size, int(size * 1.25))
+    """绘制几何极简风看板娘 PNG：柔和色块、干净线条、现代扁平感。"""
+    h = int(size * 1.25)
+    pixmap = QPixmap(size, h)
     pixmap.fill(QColor(0, 0, 0, 0))
     painter = QPainter(pixmap)
     painter.setRenderHint(QPainter.Antialiasing)
 
-    def ellipse(x, y, w, h):
-        painter.drawEllipse(int(x), int(y), int(w), int(h))
+    def ellipse(x, y, w, t_h):
+        painter.drawEllipse(int(x), int(y), int(w), int(t_h))
+
+    def line(x1, y1, x2, y2, color, width=2):
+        pen = QPen(QColor(color))
+        pen.setWidth(width)
+        pen.setCapStyle(Qt.RoundCap)
+        painter.setPen(pen)
+        painter.drawLine(int(x1), int(y1), int(x2), int(y2))
 
     try:
-        cx, cy = size // 2, int(size * 0.55)
-        face_r = int(size * 0.38)
+        cx, cy = size // 2, int(size * 0.58)
+        face_r = int(size * 0.30)
 
-        # 后发
-        painter.setBrush(QColor(255, 105, 180))
+        # 配色：低饱和珊瑚、奶油、柔灰
+        hair = QColor(120, 113, 108)      # 暖灰褐
+        skin = QColor(255, 237, 213)      # 奶油肤色
+        blush = QColor(254, 202, 202, 160)
+        accent = QColor(251, 146, 60)     # 珊瑚橙
+        line_color = QColor(87, 83, 78)
+
+        # 后发：大圆
         painter.setPen(Qt.NoPen)
-        ellipse(cx - face_r - 8, cy - face_r - 5, (face_r + 8) * 2, (face_r + 12) * 2)
+        painter.setBrush(hair)
+        ellipse(cx - face_r - 6, cy - face_r - 4, (face_r + 6) * 2, (face_r + 10) * 2)
 
-        # 左丸子
-        ellipse(cx - face_r - 18, cy - face_r - 10, face_r * 0.9, face_r * 0.9)
-        # 右丸子
-        ellipse(cx + face_r * 0.45, cy - face_r - 10, face_r * 0.9, face_r * 0.9)
-
-        # 刘海
-        for i in range(-2, 3):
-            ellipse(cx + i * 18 - 12, cy - face_r + 5, 28, 42)
-
-        # 脸
-        painter.setBrush(QColor(255, 228, 220))
+        # 脸部
+        painter.setBrush(skin)
         ellipse(cx - face_r, cy - face_r, face_r * 2, face_r * 2)
 
-        # 眼睛
-        eye_r = face_r // 4
-        left_eye = (cx - face_r // 2 - 4, cy - face_r // 6)
-        right_eye = (cx + face_r // 2 + 4, cy - face_r // 6)
-        painter.setBrush(QColor(60, 40, 40))
-        ellipse(left_eye[0] - eye_r, left_eye[1] - eye_r, eye_r * 2, eye_r * 2 + 4)
-        ellipse(right_eye[0] - eye_r, right_eye[1] - eye_r, eye_r * 2, eye_r * 2 + 4)
+        # 头发刘海：两个弧线覆盖额头
+        painter.setBrush(hair)
+        ellipse(cx - face_r - 2, cy - face_r - 6, face_r + 8, face_r * 0.85)
+        ellipse(cx - 6, cy - face_r - 6, face_r + 8, face_r * 0.85)
 
-        # 眼睛高光
+        # 耳朵
+        painter.setBrush(skin)
+        ellipse(cx - face_r - 6, cy + 2, 10, 14)
+        ellipse(cx + face_r - 4, cy + 2, 10, 14)
+
+        # 眼睛：大圆眼 + 竖线瞳孔（现代极简）
+        eye_r = max(6, face_r // 5)
+        lx, ly = cx - face_r // 2 - 2, cy - face_r // 8
+        rx, ry = cx + face_r // 2 + 2, cy - face_r // 8
+        painter.setBrush(line_color)
+        ellipse(lx - eye_r, ly - eye_r, eye_r * 2, eye_r * 2)
+        ellipse(rx - eye_r, ry - eye_r, eye_r * 2, eye_r * 2)
         painter.setBrush(QColor(255, 255, 255))
-        ellipse(left_eye[0] - eye_r // 3, left_eye[1] - eye_r // 2, eye_r // 2, eye_r // 2)
-        ellipse(right_eye[0] - eye_r // 3, right_eye[1] - eye_r // 2, eye_r // 2, eye_r // 2)
+        ellipse(lx - eye_r // 2, ly - eye_r // 2, eye_r // 2, eye_r // 2)
+        ellipse(rx - eye_r // 2, ry - eye_r // 2, eye_r // 2, eye_r // 2)
 
         # 腮红
-        painter.setBrush(QColor(255, 160, 170, 180))
-        ellipse(cx - face_r + 12, cy + face_r // 5, face_r // 3, face_r // 5)
-        ellipse(cx + face_r - 12 - face_r // 3, cy + face_r // 5, face_r // 3, face_r // 5)
+        painter.setBrush(blush)
+        ellipse(cx - face_r + 10, cy + face_r // 4, face_r // 3, face_r // 5)
+        ellipse(cx + face_r - 10 - face_r // 3, cy + face_r // 4, face_r // 3, face_r // 5)
 
-        # 嘴
-        painter.setBrush(Qt.NoBrush)
-        pen = QPen(QColor(200, 80, 110))
-        pen.setWidth(2)
-        painter.setPen(pen)
-        painter.drawArc(cx - 8, cy + face_r // 8, 16, 12, 0, -180 * 16)
+        # 嘴巴：简洁微笑线
+        line(cx - 6, cy + face_r // 3, cx, cy + face_r // 3 + 4, line_color, 2)
+        line(cx, cy + face_r // 3 + 4, cx + 6, cy + face_r // 3, line_color, 2)
 
-        # 蝴蝶结
-        painter.setBrush(QColor(255, 50, 120))
+        # 身体：简单梯形/圆角矩形
+        body_w = int(face_r * 1.4)
+        body_h = int(size * 0.28)
+        bx, by = cx - body_w // 2, cy + face_r - 4
+        painter.setBrush(QColor(245, 245, 244))
         painter.setPen(Qt.NoPen)
-        ellipse(cx - 28, cy - face_r - 8, 20, 16)
-        ellipse(cx + 8, cy - face_r - 8, 20, 16)
-        ellipse(cx - 8, cy - face_r - 10, 16, 16)
+        painter.drawRoundedRect(bx, by, body_w, body_h, body_w // 2, body_w // 2)
+
+        # 衣领装饰
+        painter.setBrush(accent)
+        ellipse(cx - 8, by + 8, 16, 10)
     finally:
         painter.end()
     pixmap.save(str(path), "PNG")
@@ -1591,17 +1607,23 @@ class QrLoginDialog(QDialog):
         event.accept()
 
 
-# ==================== 樱花飘落覆盖层 ====================
+# ==================== 柔和几何粒子覆盖层 ====================
 
 class SakuraOverlay(QWidget):
-    """透明覆盖层，用 QPainter 绘制不断下落的樱花/星星粒子。"""
+    """透明覆盖层，绘制柔和浮动的几何粒子（圆点/小圆环），现代极简。"""
 
-    def __init__(self, parent=None, count=40):
+    COLORS = [
+        QColor(251, 146, 60),
+        QColor(244, 114, 182),
+        QColor(167, 139, 250),
+        QColor(45, 212, 191),
+        QColor(250, 204, 21),
+    ]
+
+    def __init__(self, parent=None, count=30):
         super().__init__(parent)
         self.setAttribute(Qt.WA_TransparentForMouseEvents)
-        self.setAttribute(Qt.WA_TransparentForMouseEvents)
         self.particles = []
-        self.symbols = ["🌸", "✨", "💗", "🌷"]
         for _ in range(count):
             self.particles.append(self._reset_particle())
         self.timer = QTimer(self)
@@ -1613,12 +1635,13 @@ class SakuraOverlay(QWidget):
         return {
             "x": random.randint(0, max(w, 100)),
             "y": y if y is not None else random.randint(-300, 0),
-            "speed": random.uniform(1.2, 3.5),
-            "sway": random.uniform(0.3, 1.2),
+            "speed": random.uniform(0.6, 2.2),
+            "sway": random.uniform(0.2, 0.8),
             "phase": random.uniform(0, 6.28),
-            "size": random.randint(14, 22),
-            "symbol": random.choice(self.symbols),
-            "alpha": random.randint(120, 220),
+            "size": random.randint(4, 10),
+            "ring": random.random() > 0.6,
+            "color": random.choice(self.COLORS),
+            "alpha": random.randint(40, 100),
         }
 
     def resizeEvent(self, event):
@@ -1631,7 +1654,7 @@ class SakuraOverlay(QWidget):
         for i, p in enumerate(self.particles):
             p["y"] += p["speed"]
             p["x"] += math.sin(p["phase"]) * p["sway"]
-            p["phase"] += 0.05
+            p["phase"] += 0.03
             if p["y"] > self.height() + 30:
                 self.particles[i] = self._reset_particle(y=-30)
         self.update()
@@ -1640,18 +1663,27 @@ class SakuraOverlay(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
         for p in self.particles:
-            painter.setPen(QColor(255, 105, 180, p["alpha"]))
-            font = painter.font()
-            font.setPointSize(p["size"])
-            painter.setFont(font)
-            painter.drawText(int(p["x"]), int(p["y"]), p["symbol"])
+            c = QColor(p["color"])
+            c.setAlpha(p["alpha"])
+            painter.setPen(Qt.NoPen)
+            painter.setBrush(c)
+            r = p["size"] / 2
+            painter.drawEllipse(int(p["x"] - r), int(p["y"] - r), int(p["size"]), int(p["size"]))
+            if p["ring"]:
+                c2 = QColor(c)
+                c2.setAlpha(p["alpha"] // 2)
+                pen = QPen(c2)
+                pen.setWidth(1)
+                painter.setPen(pen)
+                painter.setBrush(Qt.NoBrush)
+                painter.drawEllipse(int(p["x"] - r - 3), int(p["y"] - r - 3), int(p["size"] + 6), int(p["size"] + 6))
         painter.end()
 
 
-# ==================== 霓虹发光卡片 ====================
+# ==================== 柔和发光卡片 ====================
 
 class NeonGlowCard(QFrame):
-    """带呼吸霓虹发光边框的卡片。"""
+    """柔和呼吸发光边框的卡片（玻璃拟态风格）。"""
 
     def __init__(self, title=None, glow_color="#FB7299"):
         super().__init__()
@@ -1664,20 +1696,19 @@ class NeonGlowCard(QFrame):
             title_label = QLabel(title)
             title_label.setObjectName("card-title")
             self.layout.addWidget(title_label)
-        self._glow_alpha = 80
-        self._glow_dir = 1
+        self._glow_alpha = 60
         self._glow_enabled = True
         self.anim = QPropertyAnimation(self, b"glow_alpha")
-        self.anim.setDuration(1500)
-        self.anim.setStartValue(60)
-        self.anim.setEndValue(180)
+        self.anim.setDuration(2500)
+        self.anim.setStartValue(40)
+        self.anim.setEndValue(90)
         self.anim.setEasingCurve(QEasingCurve.InOutSine)
         self.anim.finished.connect(self._reverse_glow)
         self.anim.start()
 
     def _reverse_glow(self):
         self.anim.setStartValue(self.anim.endValue())
-        self.anim.setEndValue(60 if self.anim.endValue() > 120 else 180)
+        self.anim.setEndValue(40 if self.anim.endValue() > 65 else 90)
         self.anim.start()
 
     def get_glow_alpha(self):
@@ -1698,9 +1729,9 @@ class NeonGlowCard(QFrame):
         painter.setRenderHint(QPainter.Antialiasing)
         if self._glow_enabled:
             rect = self.rect().adjusted(2, 2, -2, -2)
-            # 外发光层
-            for i in range(6, 0, -1):
-                alpha = int(self._glow_alpha * (i / 6.0) * 0.5)
+            # 柔和外发光层
+            for i in range(4, 0, -1):
+                alpha = int(self._glow_alpha * (i / 4.0) * 0.35)
                 pen = QPen(QColor(self.glow_color.red(), self.glow_color.green(), self.glow_color.blue(), alpha))
                 pen.setWidth(i * 2)
                 painter.setPen(pen)
@@ -1860,7 +1891,7 @@ class MainWindow(QMainWindow):
         self.apply_settings_to_ui()
         self.refresh_history()
         self.init_tray_icon()
-        self.statusBar().showMessage("就绪 ✨")
+        self.statusBar().showMessage("就绪")
         self.sound_player.play("click")
 
     def _init_mascot_image(self):
@@ -1955,17 +1986,17 @@ class MainWindow(QMainWindow):
         self._apply_theme()
 
     def _build_title_bar(self):
-        """构建自定义标题栏：渐变背景、图标、标题、窗口控制按钮。"""
+        """构建现代极简标题栏：柔和背景、文字图标、圆角控制按钮。"""
         bar = QFrame()
         bar.setObjectName("titleBar")
         bar.setFixedHeight(42)
         layout = QHBoxLayout(bar)
-        layout.setContentsMargins(14, 0, 10, 0)
+        layout.setContentsMargins(16, 0, 12, 0)
         layout.setSpacing(10)
 
-        icon_label = QLabel("🌸")
+        icon_label = QLabel("◉")
         icon_label.setObjectName("titleIcon")
-        icon_label.setFixedSize(24, 24)
+        icon_label.setFixedSize(26, 26)
         icon_label.setAlignment(Qt.AlignCenter)
 
         self.title_label = QLabel(self.base_window_title)
@@ -1974,21 +2005,21 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.title_label)
         layout.addStretch()
 
-        self.min_btn = QPushButton("—")
+        self.min_btn = QPushButton("−")
         self.min_btn.setObjectName("windowCtrl")
-        self.min_btn.setFixedSize(30, 30)
+        self.min_btn.setFixedSize(28, 28)
         self.min_btn.setToolTip("最小化")
         self.min_btn.clicked.connect(self.showMinimized)
 
         self.max_btn = QPushButton("□")
         self.max_btn.setObjectName("windowCtrl")
-        self.max_btn.setFixedSize(30, 30)
+        self.max_btn.setFixedSize(28, 28)
         self.max_btn.setToolTip("最大化/还原")
         self.max_btn.clicked.connect(self.toggle_maximize)
 
         self.close_btn = QPushButton("×")
         self.close_btn.setObjectName("windowCtrlClose")
-        self.close_btn.setFixedSize(30, 30)
+        self.close_btn.setFixedSize(28, 28)
         self.close_btn.setToolTip("关闭")
         self.close_btn.clicked.connect(self.close)
 
@@ -2005,47 +2036,43 @@ class MainWindow(QMainWindow):
         return bar
 
     def _build_sidebar(self):
-        """构建二次元风格侧边栏，含看板娘与漂浮装饰。"""
+        """构建现代玻璃拟态侧边栏，含几何极简看板娘。"""
         sidebar = QFrame()
         sidebar.setObjectName("sidebar")
-        sidebar.setFixedWidth(200)
+        sidebar.setFixedWidth(210)
         sidebar_layout = QVBoxLayout(sidebar)
-        sidebar_layout.setContentsMargins(16, 20, 16, 20)
-        sidebar_layout.setSpacing(8)
+        sidebar_layout.setContentsMargins(18, 24, 18, 24)
+        sidebar_layout.setSpacing(10)
 
-        # 漂浮装饰
-        decor_layout = QHBoxLayout()
-        decor_layout.setSpacing(4)
-        for emoji in ("✨", "💗", "🎀", "⭐", "🎵"):
-            lbl = QLabel(emoji)
-            lbl.setObjectName("floatingDecor")
-            lbl.setAlignment(Qt.AlignCenter)
-            decor_layout.addWidget(lbl)
-        sidebar_layout.addLayout(decor_layout)
+        # 顶部简洁装饰线
+        decor = QFrame()
+        decor.setObjectName("sidebarDecor")
+        decor.setFixedHeight(3)
+        sidebar_layout.addWidget(decor)
         sidebar_layout.addSpacing(8)
 
         logo = QLabel("BiliDown")
         logo.setObjectName("logo")
-        subtitle = QLabel("哔哩哔哩下载器")
+        subtitle = QLabel("Bilibili 视频下载器")
         subtitle.setObjectName("logo-subtitle")
         sidebar_layout.addWidget(logo)
         sidebar_layout.addWidget(subtitle)
-        sidebar_layout.addSpacing(20)
+        sidebar_layout.addSpacing(24)
 
-        self.nav_download_btn = QPushButton(" 🎀 下  载")
+        self.nav_download_btn = QPushButton(" 下 载")
         self.nav_download_btn.setObjectName("navBtn")
         self.nav_download_btn.setCheckable(True)
         self.nav_download_btn.setChecked(True)
         self.nav_download_btn.clicked.connect(lambda: self.switch_page(0))
         sidebar_layout.addWidget(self.nav_download_btn)
 
-        self.nav_history_btn = QPushButton(" 📜 历  史")
+        self.nav_history_btn = QPushButton(" 历 史")
         self.nav_history_btn.setObjectName("navBtn")
         self.nav_history_btn.setCheckable(True)
         self.nav_history_btn.clicked.connect(lambda: self.switch_page(1))
         sidebar_layout.addWidget(self.nav_history_btn)
 
-        self.nav_settings_btn = QPushButton(" ⚙️ 设  置")
+        self.nav_settings_btn = QPushButton(" 设 置")
         self.nav_settings_btn.setObjectName("navBtn")
         self.nav_settings_btn.setCheckable(True)
         self.nav_settings_btn.clicked.connect(lambda: self.switch_page(2))
@@ -2060,7 +2087,7 @@ class MainWindow(QMainWindow):
         mascot_layout.setContentsMargins(10, 10, 10, 10)
         mascot_layout.setSpacing(6)
 
-        self.mascot_bubble = QLabel("嗨！把链接丢给我吧~")
+        self.mascot_bubble = QLabel("粘贴链接，开始下载")
         self.mascot_bubble.setObjectName("mascotBubble")
         self.mascot_bubble.setWordWrap(True)
         self.mascot_bubble.setAlignment(Qt.AlignCenter)
@@ -2071,17 +2098,17 @@ class MainWindow(QMainWindow):
         mascot.setAlignment(Qt.AlignCenter)
         if self.mascot_image_path.exists():
             pixmap = QPixmap(str(self.mascot_image_path)).scaled(
-                160, 200, Qt.KeepAspectRatio, Qt.SmoothTransformation
+                150, 190, Qt.KeepAspectRatio, Qt.SmoothTransformation
             )
             mascot.setPixmap(pixmap)
         else:
-            mascot.setText("🐰\n看板娘")
+            mascot.setText("Assistant")
         mascot_layout.addWidget(mascot)
 
         sidebar_layout.addWidget(mascot_box)
         sidebar_layout.addSpacing(10)
 
-        tip = QLabel("✨ 今天也要元气满满哦~")
+        tip = QLabel("简洁、干净、好用")
         tip.setObjectName("sidebar-tip")
         tip.setWordWrap(True)
         sidebar_layout.addWidget(tip)
@@ -2126,15 +2153,15 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(28, 24, 28, 24)
         layout.setSpacing(18)
 
-        header = QLabel("🌸 下载任务")
+        header = QLabel("下载任务")
         header.setObjectName("page-title")
-        sub = QLabel("粘贴链接，选择格式，一键下载吧 ~")
+        sub = QLabel("粘贴链接，选择格式，一键下载")
         sub.setObjectName("page-subtitle")
         layout.addWidget(header)
         layout.addWidget(sub)
 
         # 输入卡片
-        input_card, input_layout = self.create_card("🔗 链接输入")
+        input_card, input_layout = self.create_card("链接输入")
         self.input_edit = DroppablePlainTextEdit()
         self.input_edit.setPlaceholderText(
             "每行一个链接或 BV 号，也可以用空格/逗号分隔\n"
@@ -2170,7 +2197,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(input_card)
 
         # 预览卡片
-        preview_card, preview_layout = self.create_card("🎬 视频预览")
+        preview_card, preview_layout = self.create_card("视频预览")
         preview_top = QHBoxLayout()
         self.cover_label = QLabel("暂无封面")
         self.cover_label.setObjectName("cover")
@@ -2322,9 +2349,9 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(28, 24, 28, 24)
         layout.setSpacing(18)
 
-        header = QLabel("📜 下载历史")
+        header = QLabel("下载历史")
         header.setObjectName("page-title")
-        sub = QLabel("过往的战绩都在这里啦 ✨")
+        sub = QLabel("查看、重新下载或管理已完成任务")
         sub.setObjectName("page-subtitle")
         layout.addWidget(header)
         layout.addWidget(sub)
@@ -2390,15 +2417,15 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(28, 24, 28, 24)
         layout.setSpacing(18)
 
-        header = QLabel("⚙️ 偏好设置")
+        header = QLabel("偏好设置")
         header.setObjectName("page-title")
-        sub = QLabel("按自己的喜好配置下载方式吧 ~")
+        sub = QLabel("按自己的习惯配置下载方式")
         sub.setObjectName("page-subtitle")
         layout.addWidget(header)
         layout.addWidget(sub)
 
         # Cookie 卡片
-        cookie_card, cookie_layout = self.create_card("🍪 Cookie 设置")
+        cookie_card, cookie_layout = self.create_card("Cookie 设置")
         cookie_mode_row = QHBoxLayout()
         cookie_mode_row.addWidget(QLabel("Cookie 来源"))
         self.cookie_mode_combo = QComboBox()
@@ -2431,7 +2458,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(cookie_card)
 
         # 下载设置卡片
-        dl_card, dl_layout = self.create_card("💾 下载设置")
+        dl_card, dl_layout = self.create_card("下载设置")
         dl_grid = QGridLayout(dl_card)
         dl_grid.setColumnStretch(1, 1)
         dl_grid.setColumnStretch(3, 1)
@@ -2489,7 +2516,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(dl_card)
 
         # 网络与文件名卡片
-        net_card, net_layout = self.create_card("🌐 网络与文件名")
+        net_card, net_layout = self.create_card("网络与文件名")
         net_grid = QGridLayout(net_card)
         net_grid.setColumnStretch(1, 1)
         net_grid.setHorizontalSpacing(12)
@@ -2505,7 +2532,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(net_card)
 
         # 附加内容卡片
-        extra_card, extra_layout = self.create_card("✨ 附加内容")
+        extra_card, extra_layout = self.create_card("附加内容")
         extra_row = QHBoxLayout()
         self.thumbnail_check = QCheckBox("下载封面")
         self.subtitle_check = QCheckBox("下载字幕")
@@ -2517,11 +2544,11 @@ class MainWindow(QMainWindow):
         extra_layout.addLayout(extra_row)
         layout.addWidget(extra_card)
 
-        # 二次元特效开关卡片
-        fx_card, fx_layout = self.create_card("🎀 二次元特效", glow=True, glow_color="#a855f7")
+        # 视觉特效开关卡片
+        fx_card, fx_layout = self.create_card("视觉特效", glow=True, glow_color="#a78bfa")
         fx_row = QHBoxLayout()
-        self.sakura_check = QCheckBox("樱花飘落")
-        self.neon_check = QCheckBox("霓虹发光")
+        self.sakura_check = QCheckBox("粒子效果")
+        self.neon_check = QCheckBox("卡片发光")
         self.sound_check = QCheckBox("音效反馈")
         self.sakura_check.stateChanged.connect(self.toggle_sakura_overlay)
         self.neon_check.stateChanged.connect(self.apply_fx_settings)
@@ -2555,175 +2582,172 @@ class MainWindow(QMainWindow):
         self.setStyleSheet("""
             QWidget {
                 font-size: 14px;
-                font-family: "Microsoft YaHei", "Segoe UI", "Comic Sans MS", sans-serif;
-                color: #1a1a2e;
+                font-family: "Microsoft YaHei", "Segoe UI", "Inter", sans-serif;
+                color: #334155;
             }
             QMainWindow {
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-                    stop:0 #fff5f7, stop:0.5 #fdf2f8, stop:1 #f0f9ff);
+                    stop:0 #f8fafc, stop:0.5 #f1f5f9, stop:1 #f5f3ff);
             }
             #sidebar {
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #FB7299, stop:0.4 #f472b6, stop:1 #a855f7);
-                border-right: 1px solid rgba(255,255,255,0.2);
+                    stop:0 #1e293b, stop:1 #334155);
+                border-right: 1px solid rgba(255,255,255,0.08);
+            }
+            #sidebarDecor {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                    stop:0 #fb923c, stop:0.5 #f472b6, stop:1 #a78bfa);
+                border-radius: 2px;
             }
             #logo {
-                font-size: 28px;
+                font-size: 26px;
                 font-weight: 800;
-                color: white;
-                padding-left: 6px;
-                letter-spacing: 1px;
+                color: #f8fafc;
+                padding-left: 4px;
+                letter-spacing: -0.5px;
             }
             #logo-subtitle {
                 font-size: 12px;
-                color: rgba(255,255,255,0.92);
-                padding-left: 6px;
-                letter-spacing: 2px;
+                color: rgba(248,250,252,0.65);
+                padding-left: 4px;
+                letter-spacing: 1px;
             }
             #navBtn {
                 background: transparent;
-                color: white;
+                color: rgba(248,250,252,0.85);
                 border: none;
-                border-radius: 12px;
+                border-radius: 14px;
                 padding: 12px 18px;
                 text-align: left;
                 font-size: 15px;
-                font-weight: 600;
-                margin: 3px 0;
+                font-weight: 500;
+                margin: 4px 0;
             }
             #navBtn:checked {
-                background: white;
-                color: #FB7299;
-                font-weight: 700;
-                border: 2px solid rgba(251,114,153,0.3);
+                background: rgba(255,255,255,0.12);
+                color: #ffffff;
+                font-weight: 600;
+                border: 1px solid rgba(255,255,255,0.15);
             }
             #navBtn:hover:!checked {
-                background: rgba(255,255,255,0.28);
+                background: rgba(255,255,255,0.08);
             }
             #sidebar-tip {
                 font-size: 12px;
-                color: rgba(255,255,255,0.95);
+                color: rgba(248,250,252,0.55);
                 padding: 10px 8px;
-                background: rgba(255,255,255,0.18);
-                border: 1px solid rgba(255,255,255,0.25);
-                border-radius: 10px;
-            }
-            #titleBar {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                    stop:0 #FB7299, stop:0.6 #f472b6, stop:1 #a855f7);
-                border-bottom: 1px solid rgba(255,255,255,0.25);
-            }
-            #titleIcon {
-                font-size: 18px;
-                background: rgba(255,255,255,0.2);
+                background: rgba(255,255,255,0.06);
+                border: 1px solid rgba(255,255,255,0.08);
                 border-radius: 12px;
             }
+            #titleBar {
+                background: rgba(255,255,255,0.85);
+                border-bottom: 1px solid rgba(148,163,184,0.2);
+            }
+            #titleIcon {
+                font-size: 16px;
+                color: #fb923c;
+                background: rgba(251,146,60,0.12);
+                border-radius: 8px;
+            }
             #titleLabel {
-                color: white;
+                color: #334155;
                 font-size: 14px;
-                font-weight: 700;
+                font-weight: 600;
                 background: transparent;
             }
             #windowCtrl {
-                background: rgba(255,255,255,0.15);
-                color: white;
-                border: none;
-                border-radius: 8px;
-                font-size: 14px;
-                font-weight: 700;
-                padding: 0;
-            }
-            #windowCtrl:hover {
-                background: rgba(255,255,255,0.35);
-            }
-            #windowCtrlClose {
-                background: rgba(255,255,255,0.15);
-                color: white;
+                background: transparent;
+                color: #64748b;
                 border: none;
                 border-radius: 8px;
                 font-size: 16px;
-                font-weight: 700;
+                font-weight: 500;
+                padding: 0;
+            }
+            #windowCtrl:hover {
+                background: #e2e8f0;
+                color: #334155;
+            }
+            #windowCtrlClose {
+                background: transparent;
+                color: #64748b;
+                border: none;
+                border-radius: 8px;
+                font-size: 18px;
+                font-weight: 500;
                 padding: 0;
             }
             #windowCtrlClose:hover {
-                background: #ff4d6d;
-            }
-            #floatingDecor {
-                font-size: 15px;
-                background: rgba(255,255,255,0.18);
-                border-radius: 10px;
-                padding: 3px 2px;
-                min-width: 22px;
+                background: #fecaca;
+                color: #dc2626;
             }
             #mascotBox {
-                background: rgba(255,255,255,0.2);
-                border: 2px solid rgba(255,255,255,0.35);
+                background: rgba(255,255,255,0.08);
+                border: 1px solid rgba(255,255,255,0.12);
                 border-radius: 20px;
             }
             #mascot {
-                font-size: 13px;
-                font-weight: 700;
-                color: white;
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-                    stop:0 rgba(255,255,255,0.35), stop:1 rgba(255,255,255,0.15));
-                border: 2px solid rgba(255,255,255,0.4);
-                border-radius: 18px;
-                padding: 10px 6px;
-                min-height: 70px;
+                font-size: 12px;
+                font-weight: 600;
+                color: rgba(248,250,252,0.7);
+                background: transparent;
+                border-radius: 14px;
+                padding: 6px 4px;
+                min-height: 60px;
             }
             #mascotBubble {
                 font-size: 12px;
-                font-weight: 600;
-                color: #831843;
+                font-weight: 500;
+                color: #1e293b;
                 background: rgba(255,255,255,0.92);
-                border: 2px solid #fbcfe8;
+                border: none;
                 border-radius: 12px;
                 padding: 8px 10px;
             }
             #page-title {
-                font-size: 26px;
-                font-weight: 800;
-                color: #ec4899;
+                font-size: 24px;
+                font-weight: 700;
+                color: #1e293b;
                 padding-bottom: 4px;
             }
             #page-subtitle {
-                color: #8b5cf6;
+                color: #64748b;
                 margin-bottom: 6px;
                 font-size: 13px;
                 font-weight: 500;
             }
             #card {
-                background: rgba(255,255,255,0.92);
-                border: 2px solid #fbcfe8;
-                border-radius: 22px;
+                background: rgba(255,255,255,0.82);
+                border: 1px solid rgba(148,163,184,0.18);
+                border-radius: 20px;
             }
             #card-title {
                 font-size: 15px;
-                font-weight: 800;
-                color: #db2777;
+                font-weight: 700;
+                color: #334155;
                 padding-bottom: 8px;
-                border-bottom: 2px solid qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                    stop:0 #fbcfe8, stop:0.5 #f9a8d4, stop:1 #e0f2fe);
+                border-bottom: 1px solid rgba(148,163,184,0.18);
             }
             #cover {
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-                    stop:0 #fce7f0, stop:0.5 #f3e8ff, stop:1 #e0f2fe);
-                border: 2px solid #FB7299;
-                border-radius: 14px;
-                color: #6b7280;
-                font-weight: 600;
+                    stop:0 #fff7ed, stop:0.5 #fdf4ff, stop:1 #f0f9ff);
+                border: 1px solid rgba(148,163,184,0.2);
+                border-radius: 16px;
+                color: #64748b;
+                font-weight: 500;
             }
             QPlainTextEdit, QLineEdit, QComboBox {
-                background: #ffffff;
-                border: 2px solid #f9a8d4;
+                background: rgba(255,255,255,0.7);
+                border: 1px solid rgba(148,163,184,0.25);
                 border-radius: 12px;
                 padding: 8px 12px;
-                selection-background-color: #FB7299;
+                selection-background-color: #fb923c;
                 selection-color: white;
             }
             QPlainTextEdit:focus, QLineEdit:focus, QComboBox:focus {
-                border: 2px solid #FB7299;
-                background: #fff0f5;
+                border: 1px solid #fb923c;
+                background: rgba(255,255,255,0.95);
             }
             QComboBox::drop-down {
                 border: none;
@@ -2733,164 +2757,160 @@ class MainWindow(QMainWindow):
                 image: none;
                 border-left: 5px solid transparent;
                 border-right: 5px solid transparent;
-                border-top: 6px solid #FB7299;
+                border-top: 6px solid #94a3b8;
                 width: 0px;
                 height: 0px;
             }
             QPushButton {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #FB7299, stop:1 #e85d8a);
+                background: #334155;
                 color: white;
                 border: none;
                 border-radius: 12px;
                 padding: 10px 22px;
-                font-weight: 700;
+                font-weight: 600;
             }
             QPushButton:hover:!disabled {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #ff85a7, stop:1 #ec4899);
+                background: #475569;
             }
             QPushButton:pressed:!disabled {
-                background: #db2777;
+                background: #1e293b;
             }
             QPushButton:disabled {
-                background: #e5e7eb;
-                color: #9ca3af;
+                background: #e2e8f0;
+                color: #94a3b8;
             }
             #secondaryBtn {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #38bdf8, stop:1 #0ea5e9);
+                background: rgba(255,255,255,0.7);
+                color: #334155;
+                border: 1px solid rgba(148,163,184,0.25);
             }
             #secondaryBtn:hover:!disabled {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #7dd3fc, stop:1 #0284c7);
+                background: rgba(255,255,255,0.95);
+                border: 1px solid rgba(148,163,184,0.4);
             }
             QProgressBar {
-                border: 2px solid #fbcfe8;
-                border-radius: 14px;
-                height: 26px;
-                background: #ffffff;
+                border: 1px solid rgba(148,163,184,0.2);
+                border-radius: 12px;
+                height: 22px;
+                background: rgba(255,255,255,0.6);
                 text-align: center;
-                color: #831843;
-                font-weight: 700;
+                color: #334155;
+                font-weight: 600;
+                font-size: 12px;
             }
             QProgressBar::chunk {
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                    stop:0 #FB7299, stop:0.25 #f472b6, stop:0.55 #a855f7, stop:0.8 #22d3ee, stop:1 #4ade80);
-                border-radius: 12px;
+                    stop:0 #fb923c, stop:1 #a78bfa);
+                border-radius: 10px;
             }
             QTableWidget {
-                background: #ffffff;
-                border: 2px solid #fbcfe8;
-                border-radius: 14px;
-                gridline-color: #fce7f3;
-                selection-background-color: #FB7299;
-                selection-color: white;
-                alternate-background-color: #fdf2f8;
+                background: rgba(255,255,255,0.7);
+                border: 1px solid rgba(148,163,184,0.18);
+                border-radius: 16px;
+                gridline-color: rgba(148,163,184,0.12);
+                selection-background-color: rgba(251,146,60,0.2);
+                selection-color: #1e293b;
+                alternate-background-color: rgba(248,250,252,0.5);
             }
             QTableWidget::item {
                 padding: 8px;
             }
             QHeaderView::section {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #fce7f3, stop:1 #fbcfe8);
-                color: #9d174d;
+                background: rgba(241,245,249,0.8);
+                color: #475569;
                 border: none;
                 padding: 10px 8px;
-                font-weight: 800;
+                font-weight: 700;
             }
             QCheckBox {
                 spacing: 8px;
                 font-weight: 500;
             }
             QCheckBox::indicator {
-                width: 22px;
-                height: 22px;
-                border-radius: 8px;
-                border: 2px solid #f9a8d4;
-                background: white;
+                width: 20px;
+                height: 20px;
+                border-radius: 6px;
+                border: 1px solid rgba(148,163,184,0.4);
+                background: rgba(255,255,255,0.7);
             }
             QCheckBox::indicator:checked {
-                background: #FB7299;
-                border: 2px solid #FB7299;
+                background: #fb923c;
+                border: 1px solid #fb923c;
             }
             QScrollBar:vertical {
-                background: #fff0f5;
-                width: 12px;
+                background: transparent;
+                width: 10px;
                 border: none;
                 margin: 2px;
             }
             QScrollBar::handle:vertical {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #FB7299, stop:1 #a855f7);
-                border-radius: 6px;
+                background: rgba(148,163,184,0.35);
+                border-radius: 5px;
                 min-height: 30px;
             }
             QScrollBar::handle:vertical:hover {
-                background: #f472b6;
+                background: rgba(148,163,184,0.55);
             }
             QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
                 background: none;
                 border: none;
             }
             QScrollBar:horizontal {
-                background: #fff0f5;
-                height: 12px;
+                background: transparent;
+                height: 10px;
                 border: none;
                 margin: 2px;
             }
             QScrollBar::handle:horizontal {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #FB7299, stop:1 #a855f7);
-                border-radius: 6px;
+                background: rgba(148,163,184,0.35);
+                border-radius: 5px;
                 min-width: 30px;
             }
             QScrollBar::handle:horizontal:hover {
-                background: #f472b6;
+                background: rgba(148,163,184,0.55);
             }
             QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
                 background: none;
                 border: none;
             }
             QStatusBar {
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                    stop:0 #ffffff, stop:1 #fdf2f8);
-                color: #db2777;
-                border-top: 2px solid #fbcfe8;
+                background: rgba(255,255,255,0.7);
+                color: #475569;
+                border-top: 1px solid rgba(148,163,184,0.15);
                 padding: 5px 14px;
-                font-size: 13px;
-                font-weight: 600;
+                font-size: 12px;
+                font-weight: 500;
             }
             QStatusBar::item {
                 border: none;
             }
             QLabel {
-                color: #1a1a2e;
+                color: #334155;
                 background: transparent;
             }
             QMenu {
-                background: white;
-                border: 2px solid #fbcfe8;
-                border-radius: 10px;
-                padding: 5px;
+                background: rgba(255,255,255,0.95);
+                border: 1px solid rgba(148,163,184,0.2);
+                border-radius: 12px;
+                padding: 6px;
             }
             QMenu::item {
                 padding: 7px 26px;
-                border-radius: 6px;
+                border-radius: 8px;
                 font-weight: 500;
             }
             QMenu::item:selected {
-                background: #FB7299;
-                color: white;
+                background: rgba(251,146,60,0.15);
+                color: #1e293b;
             }
             QMenu::separator {
                 height: 1px;
-                background: #fce7f3;
+                background: rgba(148,163,184,0.18);
                 margin: 5px 10px;
             }
             QToolTip {
-                background: #831843;
-                color: white;
+                background: #1e293b;
+                color: #f8fafc;
                 border: none;
                 border-radius: 8px;
                 padding: 6px 12px;
@@ -2964,7 +2984,7 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "保存失败", f"恢复默认设置后保存失败：\n{format_error(exc)}")
             return
         self.apply_settings_to_ui()
-        self.statusBar().showMessage("已恢复默认设置 ✨", 5000)
+        self.statusBar().showMessage("已恢复默认设置", 5000)
 
     def toggle_sakura_overlay(self, state):
         """开关樱花飘落层。"""
@@ -3036,7 +3056,7 @@ class MainWindow(QMainWindow):
             elif vip_type == 1:
                 vip_text = "（月度大会员）"
         msg = (
-            f"Cookie 可用 ✅\n\n"
+            f"Cookie 可用\n\n"
             f"用户名: {result.get('username') or '-'}\n"
             f"UID: {result.get('mid') or '-'}\n"
             f"大会员: {'是' + vip_text if result.get('vip_status') else '否'}\n"
@@ -3208,9 +3228,9 @@ class MainWindow(QMainWindow):
             # 推荐标记
             recommend = ""
             if f is best_video and is_video and not is_audio:
-                recommend = "★ 推荐"
+                recommend = "推荐"
             elif f is best_audio and is_audio and not is_video:
-                recommend = "★ 推荐"
+                recommend = "推荐"
 
             # 可用性说明
             notes = []
@@ -3245,7 +3265,7 @@ class MainWindow(QMainWindow):
                 vres = f"{best_video['width']}x{best_video['height']}"
             elif best_video.get("height"):
                 vres = f"{best_video['height']}p"
-            self.formats_table.setItem(row, 0, QTableWidgetItem("★ 最佳组合"))
+            self.formats_table.setItem(row, 0, QTableWidgetItem("最佳组合"))
             self.formats_table.setItem(row, 1, QTableWidgetItem(f"{best_video.get('format_id','')}+{best_audio.get('format_id','')}"))
             self.formats_table.setItem(row, 2, QTableWidgetItem("DASH组合"))
             self.formats_table.setItem(row, 3, QTableWidgetItem(vres))
@@ -3503,7 +3523,7 @@ class MainWindow(QMainWindow):
             title = f"{self.base_window_title} - 完成（有失败）"
             self._update_mascot_by_state("failed")
         else:
-            title = f"{self.base_window_title} - 全部完成 ✨"
+            title = f"{self.base_window_title} - 全部完成"
             self._update_mascot_by_state("completed")
         self.setWindowTitle(title)
         if hasattr(self, "title_label"):
@@ -3514,12 +3534,12 @@ class MainWindow(QMainWindow):
         if not hasattr(self, "mascot_bubble"):
             return
         lines = {
-            "idle": ["嗨！把链接丢给我吧~", "今天想下什么视频呢？", "我准备好啦 ✨"],
-            "downloading": ["正在努力下载中...", "加油加油！", "进度条在动啦~"],
-            "paused": ["暂停一下，喝口水吧~", "休息一下再继续", "我等你哦 💗"],
-            "completed": ["全部完成！太棒了 ✨", "今天也是满载而归~", "可以去欣赏啦 🎉"],
-            "failed": ["有点遗憾，要重试吗？", "失败是成功之母！", "再试一次吧 💪"],
-            "cancelled": ["已取消，随时再来哦~", "下次见啦 ~", "等你回来 🌸"],
+            "idle": ["粘贴链接，开始下载", "支持 B站、yt-dlp 源", "准备就绪"],
+            "downloading": ["下载进行中...", "稍等片刻", "正在处理"],
+            "paused": ["已暂停", "随时可以继续", "休息一下"],
+            "completed": ["全部完成", "可以去查看了", "下载结束"],
+            "failed": ["有任务失败", "检查链接或 Cookie", "可尝试重试"],
+            "cancelled": ["已取消", "欢迎再次使用", "操作已中止"],
         }
         self.mascot_bubble.setText(random.choice(lines.get(state, lines["idle"])))
 
@@ -3551,10 +3571,10 @@ class MainWindow(QMainWindow):
             output_dir = self.settings.get("download_dir") or DEFAULT_DOWNLOAD_DIR
         if ok:
             self.progress_bar.setValue(100)
-            self.statusBar().showMessage("全部任务完成 ✨")
-            self.show_tray_message("下载完成", "全部任务已完成~")
+            self.statusBar().showMessage("全部任务完成")
+            self.show_tray_message("下载完成", "全部任务已完成")
             reply = QMessageBox.question(
-                self, "下载完成 ✨",
+                self, "下载完成",
                 f"全部任务已完成！\n下载目录：{output_dir}\n\n是否打开下载目录？",
                 QMessageBox.Open | QMessageBox.No,
                 QMessageBox.Open,
