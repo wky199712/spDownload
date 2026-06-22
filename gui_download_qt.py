@@ -6,6 +6,7 @@
 """
 
 import json
+import math
 import os
 import random
 import re
@@ -19,8 +20,9 @@ from urllib.parse import parse_qs, urlparse
 
 import requests
 import yt_dlp
-from PyQt5.QtCore import QThread, QTimer, Qt, pyqtSignal
-from PyQt5.QtGui import QIcon, QPixmap
+from PyQt5.QtCore import QEasingCurve, QPropertyAnimation, QThread, QTimer, Qt, QUrl, pyqtSignal
+from PyQt5.QtGui import QColor, QIcon, QPainter, QPainterPath, QPen, QPixmap
+from PyQt5.QtMultimedia import QSoundEffect
 from PyQt5.QtWidgets import (
     QAbstractItemView,
     QApplication,
@@ -151,6 +153,9 @@ DEFAULT_SETTINGS = {
     "download_thumbnail": False,
     "download_subtitle": False,
     "download_danmaku": False,
+    "fx_sakura": True,
+    "fx_neon": True,
+    "fx_sound": True,
 }
 
 
@@ -482,6 +487,70 @@ def open_path_in_explorer(path):
             subprocess.Popen(["xdg-open", target])
     except Exception as exc:
         QMessageBox.warning(None, "打开失败", f"无法打开目录：{format_error(exc)}")
+
+
+def generate_mascot_image(path, size=200):
+    """用 QPainter 绘制一只简单可爱的二次元看板娘 PNG。"""
+    pixmap = QPixmap(size, int(size * 1.25))
+    pixmap.fill(QColor(0, 0, 0, 0))
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.Antialiasing)
+
+    cx, cy = size // 2, int(size * 0.55)
+    face_r = int(size * 0.38)
+
+    # 后发
+    painter.setBrush(QColor(255, 105, 180))
+    painter.setPen(Qt.NoPen)
+    painter.drawEllipse(cx - face_r - 8, cy - face_r - 5, (face_r + 8) * 2, (face_r + 12) * 2)
+
+    # 左丸子
+    painter.drawEllipse(cx - face_r - 18, cy - face_r - 10, face_r * 0.9, face_r * 0.9)
+    # 右丸子
+    painter.drawEllipse(cx + face_r * 0.45, cy - face_r - 10, face_r * 0.9, face_r * 0.9)
+
+    # 刘海
+    for i in range(-2, 3):
+        painter.drawEllipse(cx + i * 18 - 12, cy - face_r + 5, 28, 42)
+
+    # 脸
+    painter.setBrush(QColor(255, 228, 220))
+    painter.drawEllipse(cx - face_r, cy - face_r, face_r * 2, face_r * 2)
+
+    # 眼睛
+    eye_r = face_r // 4
+    left_eye = (cx - face_r // 2 - 4, cy - face_r // 6)
+    right_eye = (cx + face_r // 2 + 4, cy - face_r // 6)
+    painter.setBrush(QColor(60, 40, 40))
+    painter.drawEllipse(left_eye[0] - eye_r, left_eye[1] - eye_r, eye_r * 2, eye_r * 2 + 4)
+    painter.drawEllipse(right_eye[0] - eye_r, right_eye[1] - eye_r, eye_r * 2, eye_r * 2 + 4)
+
+    # 眼睛高光
+    painter.setBrush(QColor(255, 255, 255))
+    painter.drawEllipse(left_eye[0] - eye_r // 3, left_eye[1] - eye_r // 2, eye_r // 2, eye_r // 2)
+    painter.drawEllipse(right_eye[0] - eye_r // 3, right_eye[1] - eye_r // 2, eye_r // 2, eye_r // 2)
+
+    # 腮红
+    painter.setBrush(QColor(255, 160, 170, 180))
+    painter.drawEllipse(cx - face_r + 12, cy + face_r // 5, face_r // 3, face_r // 5)
+    painter.drawEllipse(cx + face_r - 12 - face_r // 3, cy + face_r // 5, face_r // 3, face_r // 5)
+
+    # 嘴
+    painter.setBrush(Qt.NoBrush)
+    pen = QPen(QColor(200, 80, 110))
+    pen.setWidth(2)
+    painter.setPen(pen)
+    painter.drawArc(cx - 8, cy + face_r // 8, 16, 12, 0, -180 * 16)
+
+    # 蝴蝶结
+    painter.setBrush(QColor(255, 50, 120))
+    painter.setPen(Qt.NoPen)
+    painter.drawEllipse(cx - 28, cy - face_r - 8, 20, 16)
+    painter.drawEllipse(cx + 8, cy - face_r - 8, 20, 16)
+    painter.drawEllipse(cx - 8, cy - face_r - 10, 16, 16)
+
+    painter.end()
+    pixmap.save(str(path), "PNG")
 
 
 # ==================== 历史记录 ====================
@@ -1518,6 +1587,181 @@ class QrLoginDialog(QDialog):
         event.accept()
 
 
+# ==================== 樱花飘落覆盖层 ====================
+
+class SakuraOverlay(QWidget):
+    """透明覆盖层，用 QPainter 绘制不断下落的樱花/星星粒子。"""
+
+    def __init__(self, parent=None, count=40):
+        super().__init__(parent)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents)
+        self.particles = []
+        self.symbols = ["🌸", "✨", "💗", "🌷"]
+        for _ in range(count):
+            self.particles.append(self._reset_particle())
+        self.timer = QTimer(self)
+        self.timer.timeout.connect(self._update_particles)
+        self.timer.start(50)
+
+    def _reset_particle(self, y=None):
+        w = self.width() or 800
+        return {
+            "x": random.randint(0, max(w, 100)),
+            "y": y if y is not None else random.randint(-300, 0),
+            "speed": random.uniform(1.2, 3.5),
+            "sway": random.uniform(0.3, 1.2),
+            "phase": random.uniform(0, 6.28),
+            "size": random.randint(14, 22),
+            "symbol": random.choice(self.symbols),
+            "alpha": random.randint(120, 220),
+        }
+
+    def resizeEvent(self, event):
+        for p in self.particles:
+            if p["x"] > self.width():
+                p["x"] = self.width() - 10
+        super().resizeEvent(event)
+
+    def _update_particles(self):
+        for i, p in enumerate(self.particles):
+            p["y"] += p["speed"]
+            p["x"] += math.sin(p["phase"]) * p["sway"]
+            p["phase"] += 0.05
+            if p["y"] > self.height() + 30:
+                self.particles[i] = self._reset_particle(y=-30)
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        for p in self.particles:
+            painter.setPen(QColor(255, 105, 180, p["alpha"]))
+            font = painter.font()
+            font.setPointSize(p["size"])
+            painter.setFont(font)
+            painter.drawText(int(p["x"]), int(p["y"]), p["symbol"])
+        painter.end()
+
+
+# ==================== 霓虹发光卡片 ====================
+
+class NeonGlowCard(QFrame):
+    """带呼吸霓虹发光边框的卡片。"""
+
+    def __init__(self, title=None, glow_color="#FB7299"):
+        super().__init__()
+        self.setObjectName("card")
+        self.glow_color = QColor(glow_color)
+        self.layout = QVBoxLayout(self)
+        self.layout.setContentsMargins(18, 16, 18, 18)
+        self.layout.setSpacing(10)
+        if title:
+            title_label = QLabel(title)
+            title_label.setObjectName("card-title")
+            self.layout.addWidget(title_label)
+        self._glow_alpha = 80
+        self._glow_dir = 1
+        self._glow_enabled = True
+        self.anim = QPropertyAnimation(self, b"glow_alpha")
+        self.anim.setDuration(1500)
+        self.anim.setStartValue(60)
+        self.anim.setEndValue(180)
+        self.anim.setEasingCurve(QEasingCurve.InOutSine)
+        self.anim.finished.connect(self._reverse_glow)
+        self.anim.start()
+
+    def _reverse_glow(self):
+        self.anim.setStartValue(self.anim.endValue())
+        self.anim.setEndValue(60 if self.anim.endValue() > 120 else 180)
+        self.anim.start()
+
+    def get_glow_alpha(self):
+        return self._glow_alpha
+
+    def set_glow_alpha(self, value):
+        self._glow_alpha = value
+        self.update()
+
+    glow_alpha = property(get_glow_alpha, set_glow_alpha)
+
+    def set_glow_enabled(self, enabled):
+        self._glow_enabled = enabled
+        self.update()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        if self._glow_enabled:
+            rect = self.rect().adjusted(2, 2, -2, -2)
+            # 外发光层
+            for i in range(6, 0, -1):
+                alpha = int(self._glow_alpha * (i / 6.0) * 0.5)
+                pen = QPen(QColor(self.glow_color.red(), self.glow_color.green(), self.glow_color.blue(), alpha))
+                pen.setWidth(i * 2)
+                painter.setPen(pen)
+                painter.setBrush(Qt.NoBrush)
+                painter.drawRoundedRect(rect.adjusted(-i, -i, i, i), 22, 22)
+        painter.end()
+        super().paintEvent(event)
+
+
+# ==================== 音效播放器 ====================
+
+class SoundPlayer:
+    """管理音效 WAV 文件并在交互时播放。"""
+
+    SOUNDS = {
+        "start": (880, 150),
+        "success": (523, 120),
+        "success2": (659, 120),
+        "fail": (220, 250),
+        "click": (1200, 60),
+        "complete": (523, 150),
+    }
+
+    def __init__(self, resource_dir):
+        self.resource_dir = Path(resource_dir)
+        self.resource_dir.mkdir(parents=True, exist_ok=True)
+        self._cache = {}
+        self.enabled = True
+
+    def _ensure_wav(self, name):
+        path = self.resource_dir / f"{name}.wav"
+        if not path.exists():
+            freq, duration = self.SOUNDS.get(name, (440, 150))
+            self._generate_beep(path, freq, duration)
+        return path
+
+    def _generate_beep(self, path, freq, duration_ms):
+        import math, wave, struct
+        sample_rate = 22050
+        samples = int(sample_rate * duration_ms / 1000.0)
+        with wave.open(str(path), "w") as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(sample_rate)
+            for i in range(samples):
+                t = i / sample_rate
+                envelope = max(0.0, 1.0 - i / samples)
+                val = int(32767 * 0.3 * envelope * math.sin(2 * math.pi * freq * t))
+                w.writeframes(struct.pack("<h", val))
+
+    def play(self, name):
+        if not self.enabled:
+            return
+        try:
+            path = self._ensure_wav(name)
+            if name not in self._cache:
+                effect = QSoundEffect()
+                effect.setSource(QUrl.fromLocalFile(str(path)))
+                effect.setVolume(0.4)
+                self._cache[name] = effect
+            self._cache[name].play()
+        except Exception:
+            pass
+
+
 # ==================== 可拖拽输入框 ====================
 
 class DroppablePlainTextEdit(QPlainTextEdit):
@@ -1605,11 +1849,24 @@ class MainWindow(QMainWindow):
         self.setWindowFlags(Qt.FramelessWindowHint)
         if (RESOURCE_DIR / "icon.ico").exists():
             self.setWindowIcon(QIcon(str(RESOURCE_DIR / "icon.ico")))
+        self.sound_player = SoundPlayer(RESOURCE_DIR / "sounds")
+        self.sakura_overlay = None
+        self._init_mascot_image()
         self.init_ui()
         self.apply_settings_to_ui()
         self.refresh_history()
         self.init_tray_icon()
         self.statusBar().showMessage("就绪 ✨")
+        self.sound_player.play("click")
+
+    def _init_mascot_image(self):
+        """生成或确认看板娘立绘图片存在。"""
+        self.mascot_image_path = RESOURCE_DIR / "mascot.png"
+        if not self.mascot_image_path.exists():
+            try:
+                generate_mascot_image(self.mascot_image_path, size=200)
+            except Exception as exc:
+                print("生成看板娘图片失败:", exc)
 
     def init_tray_icon(self):
         self.tray_icon = None
@@ -1622,8 +1879,11 @@ class MainWindow(QMainWindow):
         self.tray_icon.setToolTip("Bilibili 视频下载器")
         self.tray_icon.show()
 
-    def create_card(self, title):
-        """创建一个带标题的圆角卡片容器。"""
+    def create_card(self, title, glow=True, glow_color="#FB7299"):
+        """创建一个带标题的圆角卡片容器，glow=True 时带霓虹呼吸边框。"""
+        if glow and self.settings.get("fx_neon", True):
+            card = NeonGlowCard(title=title, glow_color=glow_color)
+            return card, card.layout
         card = QFrame()
         card.setObjectName("card")
         layout = QVBoxLayout(card)
@@ -1654,8 +1914,8 @@ class MainWindow(QMainWindow):
         root_layout.addWidget(title_bar)
 
         # ===== 主内容区 =====
-        body = QWidget()
-        body_layout = QHBoxLayout(body)
+        self.body_widget = QWidget()
+        body_layout = QHBoxLayout(self.body_widget)
         body_layout.setContentsMargins(0, 0, 0, 0)
         body_layout.setSpacing(0)
 
@@ -1678,7 +1938,12 @@ class MainWindow(QMainWindow):
         content_layout.addLayout(grip_layout)
         body_layout.addWidget(content_container, 1)
 
-        root_layout.addWidget(body, 1)
+        root_layout.addWidget(self.body_widget, 1)
+
+        # 樱花飘落层
+        self.sakura_overlay = SakuraOverlay(self.body_widget, count=40)
+        self.sakura_overlay.setGeometry(self.body_widget.rect())
+        self.sakura_overlay.show()
 
         self._build_download_page()
         self._build_history_page()
@@ -1797,10 +2062,16 @@ class MainWindow(QMainWindow):
         self.mascot_bubble.setAlignment(Qt.AlignCenter)
         mascot_layout.addWidget(self.mascot_bubble)
 
-        mascot = QLabel("🐰\n看板娘")
+        mascot = QLabel()
         mascot.setObjectName("mascot")
         mascot.setAlignment(Qt.AlignCenter)
-        mascot.setWordWrap(True)
+        if self.mascot_image_path.exists():
+            pixmap = QPixmap(str(self.mascot_image_path)).scaled(
+                160, 200, Qt.KeepAspectRatio, Qt.SmoothTransformation
+            )
+            mascot.setPixmap(pixmap)
+        else:
+            mascot.setText("🐰\n看板娘")
         mascot_layout.addWidget(mascot)
 
         sidebar_layout.addWidget(mascot_box)
@@ -1832,6 +2103,11 @@ class MainWindow(QMainWindow):
             self.showNormal()
         else:
             self.showMaximized()
+
+    def resizeEvent(self, event):
+        if self.sakura_overlay and self.body_widget:
+            self.sakura_overlay.setGeometry(self.body_widget.rect())
+        super().resizeEvent(event)
 
     # ---------- 下载页 ----------
 
@@ -2237,6 +2513,22 @@ class MainWindow(QMainWindow):
         extra_layout.addLayout(extra_row)
         layout.addWidget(extra_card)
 
+        # 二次元特效开关卡片
+        fx_card, fx_layout = self.create_card("🎀 二次元特效", glow=True, glow_color="#a855f7")
+        fx_row = QHBoxLayout()
+        self.sakura_check = QCheckBox("樱花飘落")
+        self.neon_check = QCheckBox("霓虹发光")
+        self.sound_check = QCheckBox("音效反馈")
+        self.sakura_check.stateChanged.connect(self.toggle_sakura_overlay)
+        self.neon_check.stateChanged.connect(self.apply_fx_settings)
+        self.sound_check.stateChanged.connect(self.apply_fx_settings)
+        fx_row.addWidget(self.sakura_check)
+        fx_row.addWidget(self.neon_check)
+        fx_row.addWidget(self.sound_check)
+        fx_row.addStretch()
+        fx_layout.addLayout(fx_row)
+        layout.addWidget(fx_card)
+
         # 恢复默认设置按钮
         reset_layout = QHBoxLayout()
         reset_layout.addStretch()
@@ -2618,6 +2910,10 @@ class MainWindow(QMainWindow):
         self.thumbnail_check.setChecked(bool(self.settings.get("download_thumbnail", False)))
         self.subtitle_check.setChecked(bool(self.settings.get("download_subtitle", False)))
         self.danmaku_check.setChecked(bool(self.settings.get("download_danmaku", False)))
+        self.sakura_check.setChecked(bool(self.settings.get("fx_sakura", True)))
+        self.neon_check.setChecked(bool(self.settings.get("fx_neon", True)))
+        self.sound_check.setChecked(bool(self.settings.get("fx_sound", True)))
+        self.apply_fx_settings()
         self.update_cookie_controls()
 
     def set_combo_value(self, combo, value):
@@ -2641,6 +2937,9 @@ class MainWindow(QMainWindow):
             "download_thumbnail": self.thumbnail_check.isChecked(),
             "download_subtitle": self.subtitle_check.isChecked(),
             "download_danmaku": self.danmaku_check.isChecked(),
+            "fx_sakura": self.sakura_check.isChecked(),
+            "fx_neon": self.neon_check.isChecked(),
+            "fx_sound": self.sound_check.isChecked(),
         })
         return settings
 
@@ -2662,6 +2961,20 @@ class MainWindow(QMainWindow):
             return
         self.apply_settings_to_ui()
         self.statusBar().showMessage("已恢复默认设置 ✨", 5000)
+
+    def toggle_sakura_overlay(self, state):
+        """开关樱花飘落层。"""
+        if self.sakura_overlay is None:
+            return
+        self.sakura_overlay.setVisible(state == Qt.Checked)
+
+    def apply_fx_settings(self):
+        """应用二次元特效开关到运行态。"""
+        if self.sound_player:
+            self.sound_player.enabled = self.sound_check.isChecked()
+        neon_enabled = self.neon_check.isChecked()
+        for card in self.findChildren(NeonGlowCard):
+            card.set_glow_enabled(neon_enabled)
 
     # ---------- 文件/Cookie 选择 ----------
 
@@ -2763,6 +3076,8 @@ class MainWindow(QMainWindow):
     def start_preview(self, force=False):
         if self.worker and self.worker.isRunning():
             return
+        if self.sound_player:
+            self.sound_player.play("click")
         text = self.input_edit.toPlainText()
         urls = split_inputs(text)
         if not urls:
@@ -2788,6 +3103,8 @@ class MainWindow(QMainWindow):
     def on_preview_ready(self, request_id, info):
         if request_id != self.preview_request_id:
             return
+        if self.sound_player:
+            self.sound_player.play("success")
         self.preview_formats = info.get("formats") or []
         self.preview_title_label.setText(info.get("title") or "-")
         self.preview_uploader_label.setText(info.get("uploader") or "-")
@@ -2818,6 +3135,8 @@ class MainWindow(QMainWindow):
     def on_preview_failed(self, request_id, msg):
         if request_id != self.preview_request_id:
             return
+        if self.sound_player:
+            self.sound_player.play("fail")
         self.preview_title_label.setText("解析失败")
         self.preview_note_label.setText(msg)
         QMessageBox.warning(self, "解析失败", f"无法解析该链接：\n\n{msg}\n\n请检查：\n1. 链接是否正确\n2. 是否需要配置 Cookie\n3. 网络是否连接正常")
@@ -3021,6 +3340,8 @@ class MainWindow(QMainWindow):
         if self.worker and self.worker.isRunning():
             QMessageBox.warning(self, "提示", "当前已有下载任务在进行。")
             return
+        if self.sound_player:
+            self.sound_player.play("start")
         text = self.input_edit.toPlainText()
         urls = split_inputs(text)
         if not urls:
@@ -3122,6 +3443,8 @@ class MainWindow(QMainWindow):
     def on_item_finished(self, index, output_detail, status_text):
         if index >= self.table.rowCount():
             return
+        if self.sound_player and (status_text or "完成") == "完成":
+            self.sound_player.play("success2")
         self.set_cell(index, 1, status_text or "完成")
         self.set_cell(index, 2, "100%")
         self.set_cell(index, 3, output_detail)
@@ -3131,6 +3454,8 @@ class MainWindow(QMainWindow):
     def on_item_failed(self, index, error):
         if index >= self.table.rowCount():
             return
+        if self.sound_player:
+            self.sound_player.play("fail")
         self.set_cell(index, 1, "失败")
         self.set_cell(index, 2, error)
         self._update_progress_bar()
@@ -3200,6 +3525,8 @@ class MainWindow(QMainWindow):
         self.refresh_history()
 
     def on_all_done(self, ok):
+        if self.sound_player:
+            self.sound_player.play("complete" if ok else "fail")
         self.start_btn.setEnabled(True)
         self.pause_btn.setEnabled(False)
         self.cancel_btn.setEnabled(False)
@@ -3247,6 +3574,8 @@ class MainWindow(QMainWindow):
                 pass
 
     def cancel_downloads(self):
+        if self.sound_player:
+            self.sound_player.play("click")
         if self.worker and self.worker.isRunning():
             self.statusBar().showMessage("正在取消...")
             self.worker.cancel()
@@ -3254,6 +3583,8 @@ class MainWindow(QMainWindow):
             self.update_window_title()
 
     def toggle_pause_queue(self):
+        if self.sound_player:
+            self.sound_player.play("click")
         if not self.worker:
             return
         if self.worker.paused:
