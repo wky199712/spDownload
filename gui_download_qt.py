@@ -1660,26 +1660,34 @@ class MainWindow(QMainWindow):
         sidebar_layout.addWidget(subtitle)
         sidebar_layout.addSpacing(20)
 
-        self.nav_download_btn = QPushButton("  下  载")
+        self.nav_download_btn = QPushButton(" 🎀 下  载")
         self.nav_download_btn.setObjectName("navBtn")
         self.nav_download_btn.setCheckable(True)
         self.nav_download_btn.setChecked(True)
         self.nav_download_btn.clicked.connect(lambda: self.switch_page(0))
         sidebar_layout.addWidget(self.nav_download_btn)
 
-        self.nav_history_btn = QPushButton("  历  史")
+        self.nav_history_btn = QPushButton(" 📜 历  史")
         self.nav_history_btn.setObjectName("navBtn")
         self.nav_history_btn.setCheckable(True)
         self.nav_history_btn.clicked.connect(lambda: self.switch_page(1))
         sidebar_layout.addWidget(self.nav_history_btn)
 
-        self.nav_settings_btn = QPushButton("  设  置")
+        self.nav_settings_btn = QPushButton(" ⚙️ 设  置")
         self.nav_settings_btn.setObjectName("navBtn")
         self.nav_settings_btn.setCheckable(True)
         self.nav_settings_btn.clicked.connect(lambda: self.switch_page(2))
         sidebar_layout.addWidget(self.nav_settings_btn)
 
         sidebar_layout.addStretch()
+
+        mascot = QLabel("🐰\n看板娘")
+        mascot.setObjectName("mascot")
+        mascot.setAlignment(Qt.AlignCenter)
+        mascot.setWordWrap(True)
+        sidebar_layout.addWidget(mascot)
+
+        sidebar_layout.addSpacing(10)
 
         tip = QLabel("✨ 今天也要元气满满哦~")
         tip.setObjectName("sidebar-tip")
@@ -1711,15 +1719,15 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(28, 24, 28, 24)
         layout.setSpacing(18)
 
-        header = QLabel("下载任务")
+        header = QLabel("🌸 下载任务")
         header.setObjectName("page-title")
-        sub = QLabel("粘贴链接，选择格式，一键下载吧~")
+        sub = QLabel("粘贴链接，选择格式，一键下载吧 ~")
         sub.setObjectName("page-subtitle")
         layout.addWidget(header)
         layout.addWidget(sub)
 
         # 输入卡片
-        input_card, input_layout = self.create_card("链接输入")
+        input_card, input_layout = self.create_card("🔗 链接输入")
         self.input_edit = DroppablePlainTextEdit()
         self.input_edit.setPlaceholderText(
             "每行一个链接或 BV 号，也可以用空格/逗号分隔\n"
@@ -1755,7 +1763,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(input_card)
 
         # 预览卡片
-        preview_card, preview_layout = self.create_card("视频预览")
+        preview_card, preview_layout = self.create_card("🎬 视频预览")
         preview_top = QHBoxLayout()
         self.cover_label = QLabel("暂无封面")
         self.cover_label.setObjectName("cover")
@@ -1836,7 +1844,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(preview_card)
 
         # 队列卡片
-        queue_card, queue_layout = self.create_card("下载队列")
+        queue_card, queue_layout = self.create_card("⏬ 下载队列")
         action_row = QHBoxLayout()
         self.start_btn = QPushButton("开始下载吧")
         if (RESOURCE_DIR / "download.png").exists():
@@ -1907,7 +1915,7 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(28, 24, 28, 24)
         layout.setSpacing(18)
 
-        header = QLabel("下载历史")
+        header = QLabel("📜 下载历史")
         header.setObjectName("page-title")
         sub = QLabel("过往的战绩都在这里啦 ✨")
         sub.setObjectName("page-subtitle")
@@ -1975,15 +1983,15 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(28, 24, 28, 24)
         layout.setSpacing(18)
 
-        header = QLabel("偏好设置")
+        header = QLabel("⚙️ 偏好设置")
         header.setObjectName("page-title")
-        sub = QLabel("按自己的喜好配置下载方式吧~")
+        sub = QLabel("按自己的喜好配置下载方式吧 ~")
         sub.setObjectName("page-subtitle")
         layout.addWidget(header)
         layout.addWidget(sub)
 
         # Cookie 卡片
-        cookie_card, cookie_layout = self.create_card("Cookie 设置")
+        cookie_card, cookie_layout = self.create_card("🍪 Cookie 设置")
         cookie_mode_row = QHBoxLayout()
         cookie_mode_row.addWidget(QLabel("Cookie 来源"))
         self.cookie_mode_combo = QComboBox()
@@ -2016,7 +2024,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(cookie_card)
 
         # 下载设置卡片
-        dl_card, dl_layout = self.create_card("下载设置")
+        dl_card, dl_layout = self.create_card("💾 下载设置")
         dl_grid = QGridLayout(dl_card)
         dl_grid.setColumnStretch(1, 1)
         dl_grid.setColumnStretch(3, 1)
@@ -2074,7 +2082,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(dl_card)
 
         # 网络与文件名卡片
-        net_card, net_layout = self.create_card("网络与文件名")
+        net_card, net_layout = self.create_card("🌐 网络与文件名")
         net_grid = QGridLayout(net_card)
         net_grid.setColumnStretch(1, 1)
         net_grid.setHorizontalSpacing(12)
@@ -2090,7 +2098,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(net_card)
 
         # 附加内容卡片
-        extra_card, extra_layout = self.create_card("附加内容")
+        extra_card, extra_layout = self.create_card("✨ 附加内容")
         extra_row = QHBoxLayout()
         self.thumbnail_check = QCheckBox("下载封面")
         self.subtitle_check = QCheckBox("下载字幕")
@@ -2124,113 +2132,142 @@ class MainWindow(QMainWindow):
         self.setStyleSheet("""
             QWidget {
                 font-size: 14px;
-                font-family: "Microsoft YaHei", "Segoe UI", sans-serif;
+                font-family: "Microsoft YaHei", "Segoe UI", "Comic Sans MS", sans-serif;
                 color: #1a1a2e;
             }
             QMainWindow {
-                background: #f5f6fa;
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                    stop:0 #fff5f7, stop:0.5 #fdf2f8, stop:1 #f0f9ff);
             }
             #sidebar {
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #FB7299, stop:0.5 #f47298, stop:1 #e85d8a);
-                border-right: 1px solid rgba(0,0,0,0.05);
+                    stop:0 #FB7299, stop:0.4 #f472b6, stop:1 #a855f7);
+                border-right: 1px solid rgba(255,255,255,0.2);
             }
             #logo {
-                font-size: 26px;
-                font-weight: 700;
+                font-size: 28px;
+                font-weight: 800;
                 color: white;
                 padding-left: 6px;
                 letter-spacing: 1px;
             }
             #logo-subtitle {
                 font-size: 12px;
-                color: rgba(255,255,255,0.9);
+                color: rgba(255,255,255,0.92);
                 padding-left: 6px;
                 letter-spacing: 2px;
+            }
+            #mascot {
+                font-size: 13px;
+                font-weight: 700;
+                color: white;
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                    stop:0 rgba(255,255,255,0.35), stop:1 rgba(255,255,255,0.15));
+                border: 2px solid rgba(255,255,255,0.4);
+                border-radius: 18px;
+                padding: 10px 6px;
+                min-height: 70px;
             }
             #navBtn {
                 background: transparent;
                 color: white;
                 border: none;
-                border-radius: 10px;
+                border-radius: 12px;
                 padding: 12px 18px;
                 text-align: left;
                 font-size: 15px;
-                margin: 2px 0;
+                font-weight: 600;
+                margin: 3px 0;
             }
             #navBtn:checked {
                 background: white;
                 color: #FB7299;
                 font-weight: 700;
+                border: 2px solid rgba(251,114,153,0.3);
             }
             #navBtn:hover:!checked {
-                background: rgba(255,255,255,0.25);
+                background: rgba(255,255,255,0.28);
             }
             #sidebar-tip {
                 font-size: 12px;
-                color: rgba(255,255,255,0.9);
-                padding: 8px 4px;
-                background: rgba(255,255,255,0.15);
-                border-radius: 8px;
+                color: rgba(255,255,255,0.95);
+                padding: 10px 8px;
+                background: rgba(255,255,255,0.18);
+                border: 1px solid rgba(255,255,255,0.25);
+                border-radius: 10px;
             }
             #page-title {
-                font-size: 24px;
-                font-weight: 700;
-                color: #1a1a2e;
-                padding-bottom: 2px;
+                font-size: 26px;
+                font-weight: 800;
+                color: #ec4899;
+                padding-bottom: 4px;
             }
             #page-subtitle {
-                color: #6b7280;
-                margin-bottom: 4px;
+                color: #8b5cf6;
+                margin-bottom: 6px;
                 font-size: 13px;
+                font-weight: 500;
             }
             #card {
-                background: #ffffff;
-                border: 1px solid #e5e7eb;
-                border-radius: 14px;
+                background: rgba(255,255,255,0.92);
+                border: 2px solid #fbcfe8;
+                border-radius: 18px;
             }
             #card-title {
                 font-size: 15px;
-                font-weight: 700;
-                color: #FB7299;
+                font-weight: 800;
+                color: #db2777;
                 padding-bottom: 8px;
-                border-bottom: 2px solid #fce7f0;
+                border-bottom: 2px solid qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                    stop:0 #fbcfe8, stop:0.5 #f9a8d4, stop:1 #e0f2fe);
             }
             #cover {
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-                    stop:0 #fce7f0, stop:1 #e0f2fe);
+                    stop:0 #fce7f0, stop:0.5 #f3e8ff, stop:1 #e0f2fe);
                 border: 2px solid #FB7299;
-                border-radius: 10px;
+                border-radius: 12px;
                 color: #6b7280;
                 font-weight: 600;
             }
             QPlainTextEdit, QLineEdit, QComboBox {
                 background: #ffffff;
-                border: 1.5px solid #e5e7eb;
-                border-radius: 8px;
-                padding: 7px 11px;
+                border: 1.5px solid #f9a8d4;
+                border-radius: 10px;
+                padding: 8px 12px;
                 selection-background-color: #FB7299;
                 selection-color: white;
             }
             QPlainTextEdit:focus, QLineEdit:focus, QComboBox:focus {
-                border: 1.5px solid #FB7299;
-                background: #fffafb;
+                border: 2px solid #FB7299;
+                background: #fff0f5;
+            }
+            QComboBox::drop-down {
+                border: none;
+                width: 24px;
+            }
+            QComboBox::down-arrow {
+                image: none;
+                border-left: 5px solid transparent;
+                border-right: 5px solid transparent;
+                border-top: 6px solid #FB7299;
+                width: 0px;
+                height: 0px;
             }
             QPushButton {
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
                     stop:0 #FB7299, stop:1 #e85d8a);
                 color: white;
                 border: none;
-                border-radius: 8px;
-                padding: 9px 18px;
-                font-weight: 600;
+                border-radius: 10px;
+                padding: 9px 20px;
+                font-weight: 700;
             }
             QPushButton:hover:!disabled {
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #f47298, stop:1 #d44a7c);
+                    stop:0 #ff85a7, stop:1 #ec4899);
             }
             QPushButton:pressed:!disabled {
-                background: #d44a7c;
+                background: #db2777;
             }
             QPushButton:disabled {
                 background: #e5e7eb;
@@ -2238,102 +2275,107 @@ class MainWindow(QMainWindow):
             }
             #secondaryBtn {
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #00A1D6, stop:1 #0090c1);
+                    stop:0 #38bdf8, stop:1 #0ea5e9);
             }
             #secondaryBtn:hover:!disabled {
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #00b8ee, stop:1 #0090c1);
+                    stop:0 #7dd3fc, stop:1 #0284c7);
             }
             QProgressBar {
-                border: 1.5px solid #e5e7eb;
-                border-radius: 10px;
-                height: 22px;
-                background: #f3f4f6;
+                border: 2px solid #fbcfe8;
+                border-radius: 12px;
+                height: 24px;
+                background: #ffffff;
                 text-align: center;
-                color: #1a1a2e;
-                font-weight: 600;
+                color: #831843;
+                font-weight: 700;
             }
             QProgressBar::chunk {
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                    stop:0 #FB7299, stop:0.5 #f47298, stop:1 #22c55e);
-                border-radius: 9px;
+                    stop:0 #FB7299, stop:0.35 #f472b6, stop:0.7 #a855f7, stop:1 #22d3ee);
+                border-radius: 10px;
             }
             QTableWidget {
                 background: #ffffff;
-                border: 1.5px solid #e5e7eb;
-                border-radius: 10px;
-                gridline-color: #f3f4f6;
+                border: 2px solid #fbcfe8;
+                border-radius: 12px;
+                gridline-color: #fce7f3;
                 selection-background-color: #FB7299;
                 selection-color: white;
                 alternate-background-color: #fdf2f8;
             }
             QTableWidget::item {
-                padding: 6px;
+                padding: 7px;
             }
             QHeaderView::section {
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 #fce7f0, stop:1 #fbcfe8);
-                color: #831843;
+                    stop:0 #fce7f3, stop:1 #fbcfe8);
+                color: #9d174d;
                 border: none;
-                padding: 8px 6px;
-                font-weight: 700;
+                padding: 9px 7px;
+                font-weight: 800;
             }
             QCheckBox {
-                spacing: 6px;
+                spacing: 8px;
+                font-weight: 500;
             }
             QCheckBox::indicator {
-                width: 18px;
-                height: 18px;
-                border-radius: 5px;
-                border: 1.5px solid #d1d5db;
+                width: 20px;
+                height: 20px;
+                border-radius: 6px;
+                border: 2px solid #f9a8d4;
                 background: white;
             }
             QCheckBox::indicator:checked {
                 background: #FB7299;
-                border: 1.5px solid #FB7299;
+                border: 2px solid #FB7299;
             }
             QScrollBar:vertical {
-                background: #f5f6fa;
+                background: #fff0f5;
                 width: 12px;
                 border: none;
                 margin: 2px;
             }
             QScrollBar::handle:vertical {
-                background: #FB7299;
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #FB7299, stop:1 #a855f7);
                 border-radius: 6px;
                 min-height: 30px;
             }
             QScrollBar::handle:vertical:hover {
-                background: #f47298;
+                background: #f472b6;
             }
             QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
                 background: none;
                 border: none;
             }
             QScrollBar:horizontal {
-                background: #f5f6fa;
+                background: #fff0f5;
                 height: 12px;
                 border: none;
                 margin: 2px;
             }
             QScrollBar::handle:horizontal {
-                background: #FB7299;
+                background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
+                    stop:0 #FB7299, stop:1 #a855f7);
                 border-radius: 6px;
                 min-width: 30px;
             }
             QScrollBar::handle:horizontal:hover {
-                background: #f47298;
+                background: #f472b6;
             }
             QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal {
                 background: none;
                 border: none;
             }
             QStatusBar {
-                background: #ffffff;
-                color: #6b7280;
-                border-top: 1px solid #e5e7eb;
-                padding: 4px 12px;
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                    stop:0 #ffffff, stop:1 #fdf2f8);
+                color: #db2777;
+                border-top: 2px solid #fbcfe8;
+                padding: 5px 14px;
                 font-size: 13px;
+                font-weight: 600;
             }
             QStatusBar::item {
                 border: none;
@@ -2344,13 +2386,14 @@ class MainWindow(QMainWindow):
             }
             QMenu {
                 background: white;
-                border: 1px solid #e5e7eb;
-                border-radius: 8px;
-                padding: 4px;
+                border: 2px solid #fbcfe8;
+                border-radius: 10px;
+                padding: 5px;
             }
             QMenu::item {
-                padding: 6px 24px;
-                border-radius: 4px;
+                padding: 7px 26px;
+                border-radius: 6px;
+                font-weight: 500;
             }
             QMenu::item:selected {
                 background: #FB7299;
@@ -2358,15 +2401,16 @@ class MainWindow(QMainWindow):
             }
             QMenu::separator {
                 height: 1px;
-                background: #e5e7eb;
-                margin: 4px 8px;
+                background: #fce7f3;
+                margin: 5px 10px;
             }
             QToolTip {
-                background: #1a1a2e;
+                background: #831843;
                 color: white;
                 border: none;
-                border-radius: 6px;
-                padding: 5px 10px;
+                border-radius: 8px;
+                padding: 6px 12px;
+                font-weight: 500;
             }
         """)
 
