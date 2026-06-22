@@ -5,6 +5,8 @@
 封面/字幕/弹幕下载、暂停/继续/取消/重试、系统通知。
 """
 
+import csv
+import concurrent.futures
 import json
 import math
 import os
@@ -21,7 +23,7 @@ from urllib.parse import parse_qs, urlparse
 import requests
 import yt_dlp
 from PyQt5.QtCore import QEasingCurve, QPropertyAnimation, QThread, QTimer, Qt, QUrl, pyqtSignal
-from PyQt5.QtGui import QColor, QIcon, QPainter, QPainterPath, QPen, QPixmap
+from PyQt5.QtGui import QColor, QIcon, QPainter, QPainterPath, QPen, QPixmap, QKeySequence
 from PyQt5.QtMultimedia import QSoundEffect
 from PyQt5.QtWidgets import (
     QAbstractItemView,
@@ -47,8 +49,10 @@ from PyQt5.QtWidgets import (
     QProgressBar,
     QPushButton,
     QScrollArea,
+    QShortcut,
     QSizeGrip,
     QSizePolicy,
+    QSpinBox,
     QStackedWidget,
     QSystemTrayIcon,
     QTableWidget,
@@ -66,6 +70,7 @@ SETTINGS_PATH = BASE_DIR / "settings.json"
 DEFAULT_DOWNLOAD_DIR = BASE_DIR / "download"
 HISTORY_PATH = DEFAULT_DOWNLOAD_DIR / "history.json"
 CRASH_LOG_PATH = BASE_DIR / "crash.log"
+RUNTIME_LOG_PATH = DEFAULT_DOWNLOAD_DIR / "runtime.log"
 
 FFMPEG_EXE = Path()
 
@@ -148,6 +153,7 @@ DEFAULT_SETTINGS = {
     "proxy": "",
     "filename_template": "%(title).180B [%(id)s].%(ext)s",
     "fragment_threads": 4,
+    "concurrent_downloads": 1,
     "codec_preference": "auto",
     "audio_quality": "auto",
     "download_thumbnail": False,
@@ -231,6 +237,17 @@ def apply_cookie_and_proxy_options(opts, settings):
     return opts
 
 
+def write_runtime_log(msg):
+    """将运行日志追加到 runtime.log（自动创建目录）。"""
+    try:
+        RUNTIME_LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
+        ts = time.strftime("%Y-%m-%d %H:%M:%S")
+        with open(RUNTIME_LOG_PATH, "a", encoding="utf-8") as f:
+            f.write(f"[{ts}] {msg}\n")
+    except Exception:
+        pass
+
+
 def load_settings():
     try:
         if SETTINGS_PATH.exists():
@@ -238,18 +255,20 @@ def load_settings():
                 data = json.load(f)
             merged = dict(DEFAULT_SETTINGS)
             merged.update(data)
-            return merged
-    except Exception:
-        pass
-    return dict(DEFAULT_SETTINGS)
+            return merged, None
+    except Exception as exc:
+        return dict(DEFAULT_SETTINGS), str(exc)
+    return dict(DEFAULT_SETTINGS), None
 
 
 def save_settings(settings):
+    """保存设置，返回 (True, None) 或 (False, error_msg)。"""
     try:
         with open(SETTINGS_PATH, "w", encoding="utf-8") as f:
             json.dump(settings, f, ensure_ascii=False, indent=2)
-    except Exception:
-        pass
+        return True, None
+    except Exception as exc:
+        return False, str(exc)
 
 
 def split_inputs(text):
@@ -962,86 +981,17 @@ class DownloadWorker(QThread):
         ok = True
         try:
             Path(self.settings["download_dir"]).mkdir(parents=True, exist_ok=True)
-            for index, raw in enumerate(self.inputs):
-                if self.cancelled:
-                    ok = False
-                    break
-                if index in self.skip_indices:
-                    self.item_failed.emit(index, "已从队列删除")
-                    continue
-                if not self.wait_while_paused(index):
-                    if self.cancelled:
+            concurrent = max(1, int(self.settings.get("concurrent_downloads", 1)))
+            if concurrent == 1:
+                for index, raw in enumerate(self.inputs):
+                    status = self._process_one(index, raw)
+                    if status == "cancelled":
                         ok = False
                         break
-                    self.item_failed.emit(index, "已从队列删除")
-                    continue
-
-                url = normalize_input(raw)
-                if not url:
-                    continue
-
-                self.current_titles[index] = url
-                self.item_started.emit(index, url)
-                self.log.emit(f"开始处理: {url}")
-                started_at = int(time.time())
-                try:
-                    if self.should_use_bili_selected_format(url):
-                        outputs = self.download_bili_legacy(index, url)
-                        output_detail = self.output_detail(outputs)
-                    else:
-                        output = self.download_with_ytdlp(index, url)
-                        output_detail = self.output_detail([output])
-                    # 下载弹幕
-                    if self.settings.get("download_danmaku") and is_bilibili_url(url):
-                        self.item_progress.emit(index, 100, "正在下载弹幕...")
-                        output_base = self._output_base_for_danmaku(output_detail)
-                        if output_base:
-                            if fetch_bili_danmaku_for_url(url, output_base, self.settings):
-                                self.log.emit(f"弹幕已保存: {output_base}.danmaku.xml")
-                            else:
-                                self.log.emit("弹幕下载失败或无弹幕")
-                    self.item_finished.emit(index, output_detail, "完成")
-                    self.log.emit(f"完成: {output_detail}")
-                    self.emit_history(index, url, output_detail, "completed", "", started_at)
-                except Exception as exc:
-                    if self.cancelled:
+                    if status == "failed":
                         ok = False
-                        self.item_failed.emit(index, "已取消")
-                        self.emit_history(index, url, "", "cancelled", "已取消", started_at)
-                        self.cleanup_temp_files()
-                        break
-                    if self.should_try_bili_fallback(url, exc):
-                        self.log.emit("yt-dlp 被 B站 412 拦截，尝试公开视频兜底接口...")
-                        try:
-                            outputs = self.download_bili_legacy(index, url)
-                            output_text = self.output_detail(outputs)
-                            if self.settings.get("download_danmaku"):
-                                self.item_progress.emit(index, 100, "正在下载弹幕...")
-                                output_base = self._output_base_for_danmaku(output_text)
-                                if output_base and fetch_bili_danmaku_for_url(url, output_base, self.settings):
-                                    self.log.emit(f"弹幕已保存: {output_base}.danmaku.xml")
-                            self.item_finished.emit(index, output_text, "完成（公开视频兜底）")
-                            self.log.emit(f"兜底完成: {output_text}")
-                            self.emit_history(index, url, output_text, "completed", "", started_at)
-                            continue
-                        except Exception as fallback_exc:
-                            if self.cancelled:
-                                ok = False
-                                self.item_failed.emit(index, "已取消")
-                                self.emit_history(index, url, "", "cancelled", "已取消", started_at)
-                                self.cleanup_temp_files()
-                                break
-                            ok = False
-                            err_text = format_bili_error(fallback_exc)
-                            self.item_failed.emit(index, err_text)
-                            self.log.emit(f"兜底失败: {err_text}")
-                            self.emit_history(index, url, "", "failed", err_text, started_at)
-                            continue
-                    ok = False
-                    err_text = format_bili_error(exc)
-                    self.item_failed.emit(index, err_text)
-                    self.log.emit(f"失败: {err_text}")
-                    self.emit_history(index, url, "", "failed", err_text, started_at)
+            else:
+                ok = self._run_concurrent(concurrent)
         except Exception as exc:
             write_crash_log(type(exc), exc, exc.__traceback__, source="DownloadWorker")
             ok = False
@@ -1056,6 +1006,107 @@ class DownloadWorker(QThread):
             self.all_done.emit(ok and not self.cancelled)
         except Exception as exc:
             write_crash_log(type(exc), exc, exc.__traceback__, source="DownloadWorker.all_done")
+
+    def _process_one(self, index, raw):
+        """处理单个下载任务。返回: 'ok' | 'failed' | 'cancelled' | 'skipped'。"""
+        if self.cancelled:
+            return "cancelled"
+        if index in self.skip_indices:
+            self.item_failed.emit(index, "已从队列删除")
+            return "skipped"
+        if not self.wait_while_paused(index):
+            if self.cancelled:
+                return "cancelled"
+            self.item_failed.emit(index, "已从队列删除")
+            return "skipped"
+
+        url = normalize_input(raw)
+        if not url:
+            return "skipped"
+
+        self.current_titles[index] = url
+        self.item_started.emit(index, url)
+        self.log.emit(f"开始处理: {url}")
+        started_at = int(time.time())
+        try:
+            if self.should_use_bili_selected_format(url):
+                outputs = self.download_bili_legacy(index, url)
+                output_detail = self.output_detail(outputs)
+            else:
+                output = self.download_with_ytdlp(index, url)
+                output_detail = self.output_detail([output])
+            # 下载弹幕
+            if self.settings.get("download_danmaku") and is_bilibili_url(url):
+                self.item_progress.emit(index, 100, "正在下载弹幕...")
+                output_base = self._output_base_for_danmaku(output_detail)
+                if output_base:
+                    if fetch_bili_danmaku_for_url(url, output_base, self.settings):
+                        self.log.emit(f"弹幕已保存: {output_base}.danmaku.xml")
+                    else:
+                        self.log.emit("弹幕下载失败或无弹幕")
+            self.item_finished.emit(index, output_detail, "完成")
+            self.log.emit(f"完成: {output_detail}")
+            self.emit_history(index, url, output_detail, "completed", "", started_at)
+            return "ok"
+        except Exception as exc:
+            if self.cancelled:
+                self.item_failed.emit(index, "已取消")
+                self.emit_history(index, url, "", "cancelled", "已取消", started_at)
+                return "cancelled"
+            if self.should_try_bili_fallback(url, exc):
+                self.log.emit("yt-dlp 被 B站 412 拦截，尝试公开视频兜底接口...")
+                try:
+                    outputs = self.download_bili_legacy(index, url)
+                    output_text = self.output_detail(outputs)
+                    if self.settings.get("download_danmaku"):
+                        self.item_progress.emit(index, 100, "正在下载弹幕...")
+                        output_base = self._output_base_for_danmaku(output_text)
+                        if output_base and fetch_bili_danmaku_for_url(url, output_base, self.settings):
+                            self.log.emit(f"弹幕已保存: {output_base}.danmaku.xml")
+                    self.item_finished.emit(index, output_text, "完成（公开视频兜底）")
+                    self.log.emit(f"兜底完成: {output_text}")
+                    self.emit_history(index, url, output_text, "completed", "", started_at)
+                    return "ok"
+                except Exception as fallback_exc:
+                    if self.cancelled:
+                        self.item_failed.emit(index, "已取消")
+                        self.emit_history(index, url, "", "cancelled", "已取消", started_at)
+                        return "cancelled"
+                    err_text = format_bili_error(fallback_exc)
+                    self.item_failed.emit(index, err_text)
+                    self.log.emit(f"兜底失败: {err_text}")
+                    self.emit_history(index, url, "", "failed", err_text, started_at)
+                    return "failed"
+            err_text = format_bili_error(exc)
+            self.item_failed.emit(index, err_text)
+            self.log.emit(f"失败: {err_text}")
+            self.emit_history(index, url, "", "failed", err_text, started_at)
+            return "failed"
+
+    def _run_concurrent(self, max_workers):
+        """并发下载多个任务。返回 True 表示全部成功。"""
+        ok = True
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+            futures = {
+                executor.submit(self._process_one, index, raw): index
+                for index, raw in enumerate(self.inputs)
+            }
+            for future in concurrent.futures.as_completed(futures):
+                try:
+                    status = future.result()
+                    if status in ("failed", "cancelled"):
+                        ok = False
+                        if status == "cancelled":
+                            for f in futures:
+                                f.cancel()
+                except Exception as exc:
+                    write_crash_log(type(exc), exc, exc.__traceback__, source="DownloadWorker.concurrent")
+                    ok = False
+                    try:
+                        self.log.emit(f"并发下载异常: {format_error(exc)}")
+                    except Exception:
+                        pass
+        return ok
 
     def emit_history(self, index, url, output_detail, status, error, started_at):
         title = self.current_titles.get(index) or url
@@ -1864,11 +1915,14 @@ class DroppablePlainTextEdit(QPlainTextEdit):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.settings = load_settings()
+        self.settings, load_err = load_settings()
+        if load_err:
+            print(f"设置加载失败，使用默认设置: {load_err}")
         self.worker = None
         self.preview_worker = None
         self.cookie_check_worker = None
         self.preview_request_id = 0
+        self._force_quit = False
         self.preview_pending = False
         self.preview_formats = []
         self.history_records = load_history()
@@ -1892,6 +1946,7 @@ class MainWindow(QMainWindow):
         self.apply_settings_to_ui()
         self.refresh_history()
         self.init_tray_icon()
+        self._setup_shortcuts()
         self.statusBar().showMessage("就绪")
         self.sound_player.play("click")
 
@@ -1926,7 +1981,64 @@ class MainWindow(QMainWindow):
             return
         self.tray_icon = QSystemTrayIcon(icon, self)
         self.tray_icon.setToolTip("Bilibili 视频下载器")
+        # 右键菜单
+        menu = QMenu(self)
+        act_show = menu.addAction("显示主窗口")
+        act_show.triggered.connect(self._tray_show_window)
+        act_pause = menu.addAction("暂停 / 继续")
+        act_pause.triggered.connect(self.toggle_pause_queue)
+        menu.addSeparator()
+        act_quit = menu.addAction("退出")
+        act_quit.triggered.connect(self._tray_quit)
+        self.tray_icon.setContextMenu(menu)
+        # 单击/双击还原
+        self.tray_icon.activated.connect(self._on_tray_activated)
         self.tray_icon.show()
+
+    def _on_tray_activated(self, reason):
+        if reason in (QSystemTrayIcon.Trigger, QSystemTrayIcon.DoubleClick):
+            self._tray_show_window()
+
+    def _tray_show_window(self):
+        self.showNormal()
+        self.activateWindow()
+        self.raise_()
+
+    def _tray_quit(self):
+        self._force_quit = True
+        self.close()
+
+    def _setup_shortcuts(self):
+        """注册全局键盘快捷键。"""
+        # Ctrl+Enter: 开始下载
+        QShortcut(QKeySequence("Ctrl+Return"), self, activated=self.start_downloads)
+        # Ctrl+D: 清空输入
+        QShortcut(QKeySequence("Ctrl+D"), self, activated=self.clear_input)
+        # Ctrl+Shift+V: 粘贴并解析
+        QShortcut(QKeySequence("Ctrl+Shift+V"), self, activated=lambda: self.start_preview(force=True))
+        # Space: 暂停/继续
+        QShortcut(QKeySequence("Space"), self, activated=self.toggle_pause_queue)
+        # Esc: 取消下载
+        QShortcut(QKeySequence("Escape"), self, activated=self.cancel_downloads)
+        # F5: 刷新历史
+        QShortcut(QKeySequence("F5"), self, activated=self.refresh_history)
+        # Ctrl+1/2/3: 切换页面
+        QShortcut(QKeySequence("Ctrl+1"), self, activated=lambda: self.switch_page(0))
+        QShortcut(QKeySequence("Ctrl+2"), self, activated=lambda: self.switch_page(1))
+        QShortcut(QKeySequence("Ctrl+3"), self, activated=lambda: self.switch_page(2))
+        # Ctrl+W: 最小化到托盘
+        QShortcut(QKeySequence("Ctrl+W"), self, activated=self._minimize_to_tray)
+
+    def _minimize_to_tray(self):
+        if self.tray_icon:
+            self.hide()
+            self.tray_icon.showMessage(
+                "Bilibili 视频下载器",
+                "已最小化到托盘，单击图标恢复",
+                QSystemTrayIcon.Information, 2000,
+            )
+        else:
+            self.showMinimized()
 
     def create_card(self, title, glow=True, glow_color="#FB7299"):
         """创建一个带标题的圆角卡片容器，glow=True 时带霓虹呼吸边框。"""
@@ -2208,11 +2320,15 @@ class MainWindow(QMainWindow):
         self.clear_input_btn = QPushButton("清空输入")
         self.clear_input_btn.setObjectName("secondaryBtn")
         self.clear_input_btn.clicked.connect(self.clear_input)
+        self.import_links_btn = QPushButton("导入链接")
+        self.import_links_btn.setObjectName("secondaryBtn")
+        self.import_links_btn.clicked.connect(self.import_links_from_file)
         input_actions.addWidget(self.preview_btn)
         input_actions.addWidget(self.use_format_btn)
         input_actions.addWidget(self.add_pages_btn)
         input_actions.addWidget(self.select_all_pages_btn)
         input_actions.addStretch()
+        input_actions.addWidget(self.import_links_btn)
         input_actions.addWidget(self.clear_input_btn)
         input_layout.addLayout(input_actions)
         layout.addWidget(input_card)
@@ -2395,12 +2511,20 @@ class MainWindow(QMainWindow):
         self.history_clear_btn = QPushButton("清空全部")
         self.history_clear_btn.setObjectName("secondaryBtn")
         self.history_clear_btn.clicked.connect(self.clear_all_history)
+        self.history_export_csv_btn = QPushButton("导出 CSV")
+        self.history_export_csv_btn.setObjectName("secondaryBtn")
+        self.history_export_csv_btn.clicked.connect(lambda: self.export_history("csv"))
+        self.history_export_json_btn = QPushButton("导出 JSON")
+        self.history_export_json_btn.setObjectName("secondaryBtn")
+        self.history_export_json_btn.clicked.connect(lambda: self.export_history("json"))
         action_row.addWidget(self.history_refresh_btn)
         action_row.addWidget(self.history_redownload_btn)
         action_row.addWidget(self.history_open_file_btn)
         action_row.addWidget(self.history_open_dir_btn)
         action_row.addWidget(self.history_delete_btn)
         action_row.addWidget(self.history_clear_btn)
+        action_row.addWidget(self.history_export_csv_btn)
+        action_row.addWidget(self.history_export_json_btn)
         action_row.addStretch()
         layout.addLayout(action_row)
 
@@ -2510,6 +2634,12 @@ class MainWindow(QMainWindow):
         dl_grid.addWidget(QLabel("分片并发"), 1, 2)
         dl_grid.addWidget(self.thread_combo, 1, 3)
 
+        self.concurrent_spin = QSpinBox()
+        self.concurrent_spin.setRange(1, 8)
+        self.concurrent_spin.setToolTip("同时下载多个视频的任务数（1=顺序下载，建议 2~4）")
+        dl_grid.addWidget(QLabel("任务并发"), 4, 0)
+        dl_grid.addWidget(self.concurrent_spin, 4, 1)
+
         self.custom_format_edit = QLineEdit()
         self.custom_format_edit.setReadOnly(True)
         self.custom_format_edit.setPlaceholderText("在预览格式表选中一行后点击\"使用这个格式\"")
@@ -2584,6 +2714,14 @@ class MainWindow(QMainWindow):
         # 恢复默认设置按钮
         reset_layout = QHBoxLayout()
         reset_layout.addStretch()
+        self.export_settings_btn = QPushButton("导出设置")
+        self.export_settings_btn.setObjectName("secondaryBtn")
+        self.export_settings_btn.clicked.connect(self.export_settings)
+        reset_layout.addWidget(self.export_settings_btn)
+        self.import_settings_btn = QPushButton("导入设置")
+        self.import_settings_btn.setObjectName("secondaryBtn")
+        self.import_settings_btn.clicked.connect(self.import_settings)
+        reset_layout.addWidget(self.import_settings_btn)
         self.reset_settings_btn = QPushButton("恢复默认设置")
         self.reset_settings_btn.setObjectName("secondaryBtn")
         self.reset_settings_btn.clicked.connect(self.reset_settings)
@@ -2975,6 +3113,7 @@ class MainWindow(QMainWindow):
             "proxy": self.proxy_edit.text().strip(),
             "filename_template": self.template_edit.text().strip() or DEFAULT_SETTINGS["filename_template"],
             "fragment_threads": self.thread_combo.currentData(),
+            "concurrent_downloads": self.concurrent_spin.value(),
             "codec_preference": self.codec_combo.currentData(),
             "audio_quality": self.audio_quality_combo.currentData(),
             "download_thumbnail": self.thumbnail_check.isChecked(),
@@ -2997,10 +3136,9 @@ class MainWindow(QMainWindow):
         if ret != QMessageBox.Yes:
             return
         self.settings = dict(DEFAULT_SETTINGS)
-        try:
-            save_settings(self.settings)
-        except Exception as exc:
-            QMessageBox.warning(self, "保存失败", f"恢复默认设置后保存失败：\n{format_error(exc)}")
+        ok, err = save_settings(self.settings)
+        if not ok:
+            QMessageBox.warning(self, "保存失败", f"恢复默认设置后保存失败：\n{err}")
             return
         self.apply_settings_to_ui()
         self.statusBar().showMessage("已恢复默认设置", 5000)
@@ -3099,11 +3237,10 @@ class MainWindow(QMainWindow):
             self.cookie_file_edit.setText(dialog.cookie_file_path)
             self.set_combo_value(self.cookie_mode_combo, "file")
             self.update_cookie_controls()
-            try:
-                self.settings = self.collect_settings()
-                save_settings(self.settings)
-            except Exception:
-                pass
+            self.settings = self.collect_settings()
+            ok, err = save_settings(self.settings)
+            if not ok:
+                self.statusBar().showMessage(f"设置保存失败: {err}", 5000)
             self.append_log(f"扫码登录成功，Cookie 已保存: {dialog.cookie_file_path}")
             self.statusBar().showMessage("扫码登录成功", 5000)
             self.check_cookie_status()
@@ -3365,6 +3502,30 @@ class MainWindow(QMainWindow):
         self.custom_format_edit.clear()
         self.statusBar().showMessage("已清空输入", 2000)
 
+    def import_links_from_file(self):
+        """从 .txt 文件导入链接列表。"""
+        path, _ = QFileDialog.getOpenFileName(
+            self, "导入链接文件", "", "文本文件 (*.txt);;所有文件 (*)"
+        )
+        if not path:
+            return
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                content = f.read()
+            urls = split_inputs(content)
+            if not urls:
+                QMessageBox.information(self, "提示", "文件中未找到有效链接。")
+                return
+            existing = self.input_edit.toPlainText().strip()
+            if existing:
+                self.input_edit.setPlainText(existing + "\n" + "\n".join(urls))
+            else:
+                self.input_edit.setPlainText("\n".join(urls))
+            self.statusBar().showMessage(f"已导入 {len(urls)} 条链接", 3000)
+            self.append_log(f"从文件导入 {len(urls)} 条链接: {path}")
+        except Exception as exc:
+            QMessageBox.warning(self, "导入失败", f"读取文件失败：\n{format_error(exc)}")
+
     # ---------- 下载 ----------
 
     def check_cookie_settings(self):
@@ -3391,7 +3552,9 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "提示", "请输入要下载的链接。")
             return
         self.settings = self.collect_settings()
-        save_settings(self.settings)
+        ok, err = save_settings(self.settings)
+        if not ok:
+            self.statusBar().showMessage(f"设置保存失败: {err}", 5000)
         download_dir = self.settings.get("download_dir") or DEFAULT_DOWNLOAD_DIR
         try:
             Path(download_dir).mkdir(parents=True, exist_ok=True)
@@ -3446,6 +3609,7 @@ class MainWindow(QMainWindow):
         self.codec_combo.setEnabled(enabled)
         self.audio_quality_combo.setEnabled(enabled)
         self.thread_combo.setEnabled(enabled)
+        self.concurrent_spin.setEnabled(enabled)
         self.proxy_edit.setEnabled(enabled)
         self.template_edit.setEnabled(enabled)
         self.thumbnail_check.setEnabled(enabled)
@@ -3649,7 +3813,9 @@ class MainWindow(QMainWindow):
 
     def append_log(self, msg):
         ts = time.strftime("%H:%M:%S")
-        self.log_edit.appendPlainText(f"[{ts}] {msg}")
+        line = f"[{ts}] {msg}"
+        self.log_edit.appendPlainText(line)
+        write_runtime_log(msg)
 
     def log_edit_clear(self):
         self.log_edit.clear()
@@ -3872,6 +4038,84 @@ class MainWindow(QMainWindow):
             save_history([])
             self.refresh_history()
 
+    def export_history(self, fmt):
+        """导出历史记录到 CSV 或 JSON 文件。"""
+        records = self.history_records or load_history()
+        if not records:
+            QMessageBox.information(self, "导出", "当前没有历史记录可导出。")
+            return
+        if fmt == "csv":
+            default_name = "bilibili_history.csv"
+            filter_str = "CSV 文件 (*.csv);;所有文件 (*)"
+        else:
+            default_name = "bilibili_history.json"
+            filter_str = "JSON 文件 (*.json);;所有文件 (*)"
+        path, _ = QFileDialog.getSaveFileName(
+            self, "导出历史记录", default_name, filter_str
+        )
+        if not path:
+            return
+        try:
+            if fmt == "csv":
+                fields = ["title", "url", "status", "file_size", "duration",
+                          "resolution", "output_path", "error", "created_at", "finished_at"]
+                with open(path, "w", encoding="utf-8-sig", newline="") as f:
+                    writer = csv.DictWriter(f, fieldnames=fields, extrasaction="ignore")
+                    writer.writeheader()
+                    for r in records:
+                        writer.writerow(r)
+            else:
+                with open(path, "w", encoding="utf-8") as f:
+                    json.dump(records, f, ensure_ascii=False, indent=2)
+            self.statusBar().showMessage(f"已导出 {len(records)} 条记录到 {path}", 5000)
+            self.append_log(f"导出历史记录 ({fmt}): {path} ({len(records)} 条)")
+            QMessageBox.information(self, "导出成功", f"已导出 {len(records)} 条记录到\n{path}")
+        except Exception as exc:
+            QMessageBox.warning(self, "导出失败", f"导出失败：\n{format_error(exc)}")
+
+    def export_settings(self):
+        """导出当前设置到 JSON 文件。"""
+        path, _ = QFileDialog.getSaveFileName(
+            self, "导出设置", "bilibili_settings.json", "JSON 文件 (*.json);;所有文件 (*)"
+        )
+        if not path:
+            return
+        try:
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(self.settings, f, ensure_ascii=False, indent=2)
+            self.statusBar().showMessage(f"设置已导出到 {path}", 5000)
+            self.append_log(f"导出设置: {path}")
+            QMessageBox.information(self, "导出成功", f"设置已导出到\n{path}")
+        except Exception as exc:
+            QMessageBox.warning(self, "导出失败", f"导出失败：\n{format_error(exc)}")
+
+    def import_settings(self):
+        """从 JSON 文件导入设置。"""
+        path, _ = QFileDialog.getOpenFileName(
+            self, "导入设置", "", "JSON 文件 (*.json);;所有文件 (*)"
+        )
+        if not path:
+            return
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            if not isinstance(data, dict):
+                QMessageBox.warning(self, "导入失败", "文件内容不是有效的设置 JSON。")
+                return
+            merged = dict(DEFAULT_SETTINGS)
+            merged.update(data)
+            ok, err = save_settings(merged)
+            if not ok:
+                QMessageBox.warning(self, "导入失败", f"保存设置失败：\n{err}")
+                return
+            self.settings = merged
+            self.apply_settings_to_ui()
+            self.statusBar().showMessage(f"设置已从 {path} 导入", 5000)
+            self.append_log(f"导入设置: {path}")
+            QMessageBox.information(self, "导入成功", "设置已导入并应用。")
+        except Exception as exc:
+            QMessageBox.warning(self, "导入失败", f"导入失败：\n{format_error(exc)}")
+
     def show_history_context_menu(self, pos):
         index = self.history_table.indexAt(pos)
         if not index.isValid():
@@ -3908,6 +4152,16 @@ class MainWindow(QMainWindow):
     # ---------- 关闭 ----------
 
     def closeEvent(self, event):
+        # 如果托盘可用且不是强制退出，最小化到托盘
+        if self.tray_icon and not self._force_quit:
+            event.ignore()
+            self.hide()
+            self.tray_icon.showMessage(
+                "Bilibili 视频下载器",
+                "已最小化到托盘，单击图标恢复窗口",
+                QSystemTrayIcon.Information, 3000,
+            )
+            return
         if self.worker and self.worker.isRunning():
             ret = QMessageBox.question(
                 self, "确认退出",
@@ -3923,10 +4177,9 @@ class MainWindow(QMainWindow):
             self.preview_worker.wait(2000)
         if self.cookie_check_worker and self.cookie_check_worker.isRunning():
             self.cookie_check_worker.wait(2000)
-        try:
-            save_settings(self.collect_settings())
-        except Exception:
-            pass
+        ok, err = save_settings(self.collect_settings())
+        if not ok:
+            self.statusBar().showMessage(f"设置保存失败: {err}", 5000)
         if self.tray_icon:
             self.tray_icon.hide()
         event.accept()
