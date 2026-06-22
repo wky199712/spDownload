@@ -1882,8 +1882,9 @@ class MainWindow(QMainWindow):
         self._drag_pos = None
         self._is_maximized = False
         self.setWindowFlags(Qt.FramelessWindowHint)
-        if (RESOURCE_DIR / "icon.ico").exists():
-            self.setWindowIcon(QIcon(str(RESOURCE_DIR / "icon.ico")))
+        app_icon = self._app_icon_path()
+        if app_icon:
+            self.setWindowIcon(QIcon(str(app_icon)))
         self.sound_player = SoundPlayer(RESOURCE_DIR / "sounds")
         self.sakura_overlay = None
         self._init_mascot_image()
@@ -1894,20 +1895,33 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage("就绪")
         self.sound_player.play("click")
 
+    def _app_icon_path(self):
+        """返回应用图标路径，优先使用 icon.png，其次 icon.ico。"""
+        for name in ("icon.png", "icon.ico"):
+            path = RESOURCE_DIR / name
+            if path.exists():
+                return path
+        return None
+
     def _init_mascot_image(self):
-        """生成或确认看板娘立绘图片存在。"""
-        self.mascot_image_path = RESOURCE_DIR / "mascot.png"
-        if not self.mascot_image_path.exists():
-            try:
-                generate_mascot_image(self.mascot_image_path, size=200)
-            except Exception as exc:
-                print("生成看板娘图片失败:", exc)
+        """确认侧边栏看板娘图片：优先使用 icon.png，缺失时生成 mascot.png。"""
+        icon_path = self._app_icon_path()
+        if icon_path and icon_path.suffix.lower() == ".png":
+            self.mascot_image_path = icon_path
+        else:
+            self.mascot_image_path = RESOURCE_DIR / "mascot.png"
+            if not self.mascot_image_path.exists():
+                try:
+                    generate_mascot_image(self.mascot_image_path, size=200)
+                except Exception as exc:
+                    print("生成看板娘图片失败:", exc)
 
     def init_tray_icon(self):
         self.tray_icon = None
         if not QSystemTrayIcon.isSystemTrayAvailable():
             return
-        icon = QIcon(str(RESOURCE_DIR / "icon.ico")) if (RESOURCE_DIR / "icon.ico").exists() else QIcon()
+        app_icon = self._app_icon_path()
+        icon = QIcon(str(app_icon)) if app_icon else QIcon()
         if icon.isNull():
             return
         self.tray_icon = QSystemTrayIcon(icon, self)
@@ -1994,10 +2008,17 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(16, 0, 12, 0)
         layout.setSpacing(10)
 
-        icon_label = QLabel("◉")
+        icon_label = QLabel()
         icon_label.setObjectName("titleIcon")
-        icon_label.setFixedSize(26, 26)
+        icon_label.setFixedSize(28, 28)
         icon_label.setAlignment(Qt.AlignCenter)
+        app_icon = self._app_icon_path()
+        if app_icon:
+            icon_label.setPixmap(
+                QPixmap(str(app_icon)).scaled(
+                    22, 22, Qt.KeepAspectRatio, Qt.SmoothTransformation
+                )
+            )
 
         self.title_label = QLabel(self.base_window_title)
         self.title_label.setObjectName("titleLabel")
@@ -2645,9 +2666,7 @@ class MainWindow(QMainWindow):
                 border-bottom: 1px solid rgba(148,163,184,0.2);
             }
             #titleIcon {
-                font-size: 16px;
-                color: #fb923c;
-                background: rgba(251,146,60,0.12);
+                background: transparent;
                 border-radius: 8px;
             }
             #titleLabel {
