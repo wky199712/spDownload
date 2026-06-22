@@ -496,60 +496,64 @@ def generate_mascot_image(path, size=200):
     painter = QPainter(pixmap)
     painter.setRenderHint(QPainter.Antialiasing)
 
-    cx, cy = size // 2, int(size * 0.55)
-    face_r = int(size * 0.38)
+    def ellipse(x, y, w, h):
+        painter.drawEllipse(int(x), int(y), int(w), int(h))
 
-    # 后发
-    painter.setBrush(QColor(255, 105, 180))
-    painter.setPen(Qt.NoPen)
-    painter.drawEllipse(cx - face_r - 8, cy - face_r - 5, (face_r + 8) * 2, (face_r + 12) * 2)
+    try:
+        cx, cy = size // 2, int(size * 0.55)
+        face_r = int(size * 0.38)
 
-    # 左丸子
-    painter.drawEllipse(cx - face_r - 18, cy - face_r - 10, face_r * 0.9, face_r * 0.9)
-    # 右丸子
-    painter.drawEllipse(cx + face_r * 0.45, cy - face_r - 10, face_r * 0.9, face_r * 0.9)
+        # 后发
+        painter.setBrush(QColor(255, 105, 180))
+        painter.setPen(Qt.NoPen)
+        ellipse(cx - face_r - 8, cy - face_r - 5, (face_r + 8) * 2, (face_r + 12) * 2)
 
-    # 刘海
-    for i in range(-2, 3):
-        painter.drawEllipse(cx + i * 18 - 12, cy - face_r + 5, 28, 42)
+        # 左丸子
+        ellipse(cx - face_r - 18, cy - face_r - 10, face_r * 0.9, face_r * 0.9)
+        # 右丸子
+        ellipse(cx + face_r * 0.45, cy - face_r - 10, face_r * 0.9, face_r * 0.9)
 
-    # 脸
-    painter.setBrush(QColor(255, 228, 220))
-    painter.drawEllipse(cx - face_r, cy - face_r, face_r * 2, face_r * 2)
+        # 刘海
+        for i in range(-2, 3):
+            ellipse(cx + i * 18 - 12, cy - face_r + 5, 28, 42)
 
-    # 眼睛
-    eye_r = face_r // 4
-    left_eye = (cx - face_r // 2 - 4, cy - face_r // 6)
-    right_eye = (cx + face_r // 2 + 4, cy - face_r // 6)
-    painter.setBrush(QColor(60, 40, 40))
-    painter.drawEllipse(left_eye[0] - eye_r, left_eye[1] - eye_r, eye_r * 2, eye_r * 2 + 4)
-    painter.drawEllipse(right_eye[0] - eye_r, right_eye[1] - eye_r, eye_r * 2, eye_r * 2 + 4)
+        # 脸
+        painter.setBrush(QColor(255, 228, 220))
+        ellipse(cx - face_r, cy - face_r, face_r * 2, face_r * 2)
 
-    # 眼睛高光
-    painter.setBrush(QColor(255, 255, 255))
-    painter.drawEllipse(left_eye[0] - eye_r // 3, left_eye[1] - eye_r // 2, eye_r // 2, eye_r // 2)
-    painter.drawEllipse(right_eye[0] - eye_r // 3, right_eye[1] - eye_r // 2, eye_r // 2, eye_r // 2)
+        # 眼睛
+        eye_r = face_r // 4
+        left_eye = (cx - face_r // 2 - 4, cy - face_r // 6)
+        right_eye = (cx + face_r // 2 + 4, cy - face_r // 6)
+        painter.setBrush(QColor(60, 40, 40))
+        ellipse(left_eye[0] - eye_r, left_eye[1] - eye_r, eye_r * 2, eye_r * 2 + 4)
+        ellipse(right_eye[0] - eye_r, right_eye[1] - eye_r, eye_r * 2, eye_r * 2 + 4)
 
-    # 腮红
-    painter.setBrush(QColor(255, 160, 170, 180))
-    painter.drawEllipse(cx - face_r + 12, cy + face_r // 5, face_r // 3, face_r // 5)
-    painter.drawEllipse(cx + face_r - 12 - face_r // 3, cy + face_r // 5, face_r // 3, face_r // 5)
+        # 眼睛高光
+        painter.setBrush(QColor(255, 255, 255))
+        ellipse(left_eye[0] - eye_r // 3, left_eye[1] - eye_r // 2, eye_r // 2, eye_r // 2)
+        ellipse(right_eye[0] - eye_r // 3, right_eye[1] - eye_r // 2, eye_r // 2, eye_r // 2)
 
-    # 嘴
-    painter.setBrush(Qt.NoBrush)
-    pen = QPen(QColor(200, 80, 110))
-    pen.setWidth(2)
-    painter.setPen(pen)
-    painter.drawArc(cx - 8, cy + face_r // 8, 16, 12, 0, -180 * 16)
+        # 腮红
+        painter.setBrush(QColor(255, 160, 170, 180))
+        ellipse(cx - face_r + 12, cy + face_r // 5, face_r // 3, face_r // 5)
+        ellipse(cx + face_r - 12 - face_r // 3, cy + face_r // 5, face_r // 3, face_r // 5)
 
-    # 蝴蝶结
-    painter.setBrush(QColor(255, 50, 120))
-    painter.setPen(Qt.NoPen)
-    painter.drawEllipse(cx - 28, cy - face_r - 8, 20, 16)
-    painter.drawEllipse(cx + 8, cy - face_r - 8, 20, 16)
-    painter.drawEllipse(cx - 8, cy - face_r - 10, 16, 16)
+        # 嘴
+        painter.setBrush(Qt.NoBrush)
+        pen = QPen(QColor(200, 80, 110))
+        pen.setWidth(2)
+        painter.setPen(pen)
+        painter.drawArc(cx - 8, cy + face_r // 8, 16, 12, 0, -180 * 16)
 
-    painter.end()
+        # 蝴蝶结
+        painter.setBrush(QColor(255, 50, 120))
+        painter.setPen(Qt.NoPen)
+        ellipse(cx - 28, cy - face_r - 8, 20, 16)
+        ellipse(cx + 8, cy - face_r - 8, 20, 16)
+        ellipse(cx - 8, cy - face_r - 10, 16, 16)
+    finally:
+        painter.end()
     pixmap.save(str(path), "PNG")
 
 
