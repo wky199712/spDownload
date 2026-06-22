@@ -7,6 +7,7 @@
 
 import json
 import os
+import random
 import re
 import subprocess
 import sys
@@ -44,6 +45,7 @@ from PyQt5.QtWidgets import (
     QProgressBar,
     QPushButton,
     QScrollArea,
+    QSizeGrip,
     QSizePolicy,
     QStackedWidget,
     QSystemTrayIcon,
@@ -1598,6 +1600,9 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(self.base_window_title)
         self.resize(1280, 860)
         self.setMinimumSize(900, 600)
+        self._drag_pos = None
+        self._is_maximized = False
+        self.setWindowFlags(Qt.FramelessWindowHint)
         if (RESOURCE_DIR / "icon.ico").exists():
             self.setWindowIcon(QIcon(str(RESOURCE_DIR / "icon.ico")))
         self.init_ui()
@@ -1640,17 +1645,115 @@ class MainWindow(QMainWindow):
     def init_ui(self):
         root = QWidget()
         self.setCentralWidget(root)
-        root_layout = QHBoxLayout(root)
+        root_layout = QVBoxLayout(root)
         root_layout.setContentsMargins(0, 0, 0, 0)
         root_layout.setSpacing(0)
 
-        # ===== 侧边栏 =====
+        # ===== 自定义标题栏 =====
+        title_bar = self._build_title_bar()
+        root_layout.addWidget(title_bar)
+
+        # ===== 主内容区 =====
+        body = QWidget()
+        body_layout = QHBoxLayout(body)
+        body_layout.setContentsMargins(0, 0, 0, 0)
+        body_layout.setSpacing(0)
+
+        # 侧边栏
+        sidebar = self._build_sidebar()
+        body_layout.addWidget(sidebar)
+
+        # 右侧内容区（含缩放抓手）
+        content_container = QWidget()
+        content_layout = QVBoxLayout(content_container)
+        content_layout.setContentsMargins(0, 0, 0, 0)
+        content_layout.setSpacing(0)
+        self.content_stack = QStackedWidget()
+        self.content_stack.setObjectName("contentStack")
+        content_layout.addWidget(self.content_stack, 1)
+        grip_layout = QHBoxLayout()
+        grip_layout.setContentsMargins(0, 0, 0, 0)
+        grip_layout.addStretch()
+        grip_layout.addWidget(QSizeGrip(content_container))
+        content_layout.addLayout(grip_layout)
+        body_layout.addWidget(content_container, 1)
+
+        root_layout.addWidget(body, 1)
+
+        self._build_download_page()
+        self._build_history_page()
+        self._build_settings_page()
+        self._apply_theme()
+
+    def _build_title_bar(self):
+        """构建自定义标题栏：渐变背景、图标、标题、窗口控制按钮。"""
+        bar = QFrame()
+        bar.setObjectName("titleBar")
+        bar.setFixedHeight(42)
+        layout = QHBoxLayout(bar)
+        layout.setContentsMargins(14, 0, 10, 0)
+        layout.setSpacing(10)
+
+        icon_label = QLabel("🌸")
+        icon_label.setObjectName("titleIcon")
+        icon_label.setFixedSize(24, 24)
+        icon_label.setAlignment(Qt.AlignCenter)
+
+        self.title_label = QLabel(self.base_window_title)
+        self.title_label.setObjectName("titleLabel")
+        layout.addWidget(icon_label)
+        layout.addWidget(self.title_label)
+        layout.addStretch()
+
+        self.min_btn = QPushButton("—")
+        self.min_btn.setObjectName("windowCtrl")
+        self.min_btn.setFixedSize(30, 30)
+        self.min_btn.setToolTip("最小化")
+        self.min_btn.clicked.connect(self.showMinimized)
+
+        self.max_btn = QPushButton("□")
+        self.max_btn.setObjectName("windowCtrl")
+        self.max_btn.setFixedSize(30, 30)
+        self.max_btn.setToolTip("最大化/还原")
+        self.max_btn.clicked.connect(self.toggle_maximize)
+
+        self.close_btn = QPushButton("×")
+        self.close_btn.setObjectName("windowCtrlClose")
+        self.close_btn.setFixedSize(30, 30)
+        self.close_btn.setToolTip("关闭")
+        self.close_btn.clicked.connect(self.close)
+
+        layout.addWidget(self.min_btn)
+        layout.addWidget(self.max_btn)
+        layout.addWidget(self.close_btn)
+
+        # 标题栏拖拽
+        bar.mousePressEvent = self._title_bar_mouse_press
+        bar.mouseMoveEvent = self._title_bar_mouse_move
+        bar.mouseReleaseEvent = self._title_bar_mouse_release
+        bar.mouseDoubleClickEvent = lambda event: self.toggle_maximize()
+
+        return bar
+
+    def _build_sidebar(self):
+        """构建二次元风格侧边栏，含看板娘与漂浮装饰。"""
         sidebar = QFrame()
         sidebar.setObjectName("sidebar")
         sidebar.setFixedWidth(200)
         sidebar_layout = QVBoxLayout(sidebar)
-        sidebar_layout.setContentsMargins(16, 24, 16, 24)
+        sidebar_layout.setContentsMargins(16, 20, 16, 20)
         sidebar_layout.setSpacing(8)
+
+        # 漂浮装饰
+        decor_layout = QHBoxLayout()
+        decor_layout.setSpacing(4)
+        for emoji in ("✨", "💗", "🎀", "⭐", "🎵"):
+            lbl = QLabel(emoji)
+            lbl.setObjectName("floatingDecor")
+            lbl.setAlignment(Qt.AlignCenter)
+            decor_layout.addWidget(lbl)
+        sidebar_layout.addLayout(decor_layout)
+        sidebar_layout.addSpacing(8)
 
         logo = QLabel("BiliDown")
         logo.setObjectName("logo")
@@ -1681,12 +1784,26 @@ class MainWindow(QMainWindow):
 
         sidebar_layout.addStretch()
 
+        # 看板娘 + 对话气泡
+        mascot_box = QFrame()
+        mascot_box.setObjectName("mascotBox")
+        mascot_layout = QVBoxLayout(mascot_box)
+        mascot_layout.setContentsMargins(10, 10, 10, 10)
+        mascot_layout.setSpacing(6)
+
+        self.mascot_bubble = QLabel("嗨！把链接丢给我吧~")
+        self.mascot_bubble.setObjectName("mascotBubble")
+        self.mascot_bubble.setWordWrap(True)
+        self.mascot_bubble.setAlignment(Qt.AlignCenter)
+        mascot_layout.addWidget(self.mascot_bubble)
+
         mascot = QLabel("🐰\n看板娘")
         mascot.setObjectName("mascot")
         mascot.setAlignment(Qt.AlignCenter)
         mascot.setWordWrap(True)
-        sidebar_layout.addWidget(mascot)
+        mascot_layout.addWidget(mascot)
 
+        sidebar_layout.addWidget(mascot_box)
         sidebar_layout.addSpacing(10)
 
         tip = QLabel("✨ 今天也要元气满满哦~")
@@ -1694,17 +1811,27 @@ class MainWindow(QMainWindow):
         tip.setWordWrap(True)
         sidebar_layout.addWidget(tip)
 
-        root_layout.addWidget(sidebar)
+        return sidebar
 
-        # ===== 右侧内容区 =====
-        self.content_stack = QStackedWidget()
-        self.content_stack.setObjectName("contentStack")
-        root_layout.addWidget(self.content_stack, 1)
+    def _title_bar_mouse_press(self, event):
+        if event.button() == Qt.LeftButton:
+            self._drag_pos = event.globalPos() - self.frameGeometry().topLeft()
+            event.accept()
 
-        self._build_download_page()
-        self._build_history_page()
-        self._build_settings_page()
-        self._apply_theme()
+    def _title_bar_mouse_move(self, event):
+        if self._drag_pos is not None and event.buttons() == Qt.LeftButton:
+            self.move(event.globalPos() - self._drag_pos)
+            event.accept()
+
+    def _title_bar_mouse_release(self, event):
+        self._drag_pos = None
+        event.accept()
+
+    def toggle_maximize(self):
+        if self.isMaximized():
+            self.showNormal()
+        else:
+            self.showMaximized()
 
     # ---------- 下载页 ----------
 
@@ -2157,17 +2284,6 @@ class MainWindow(QMainWindow):
                 padding-left: 6px;
                 letter-spacing: 2px;
             }
-            #mascot {
-                font-size: 13px;
-                font-weight: 700;
-                color: white;
-                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-                    stop:0 rgba(255,255,255,0.35), stop:1 rgba(255,255,255,0.15));
-                border: 2px solid rgba(255,255,255,0.4);
-                border-radius: 18px;
-                padding: 10px 6px;
-                min-height: 70px;
-            }
             #navBtn {
                 background: transparent;
                 color: white;
@@ -2196,6 +2312,78 @@ class MainWindow(QMainWindow):
                 border: 1px solid rgba(255,255,255,0.25);
                 border-radius: 10px;
             }
+            #titleBar {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
+                    stop:0 #FB7299, stop:0.6 #f472b6, stop:1 #a855f7);
+                border-bottom: 1px solid rgba(255,255,255,0.25);
+            }
+            #titleIcon {
+                font-size: 18px;
+                background: rgba(255,255,255,0.2);
+                border-radius: 12px;
+            }
+            #titleLabel {
+                color: white;
+                font-size: 14px;
+                font-weight: 700;
+                background: transparent;
+            }
+            #windowCtrl {
+                background: rgba(255,255,255,0.15);
+                color: white;
+                border: none;
+                border-radius: 8px;
+                font-size: 14px;
+                font-weight: 700;
+                padding: 0;
+            }
+            #windowCtrl:hover {
+                background: rgba(255,255,255,0.35);
+            }
+            #windowCtrlClose {
+                background: rgba(255,255,255,0.15);
+                color: white;
+                border: none;
+                border-radius: 8px;
+                font-size: 16px;
+                font-weight: 700;
+                padding: 0;
+            }
+            #windowCtrlClose:hover {
+                background: #ff4d6d;
+            }
+            #floatingDecor {
+                font-size: 15px;
+                background: rgba(255,255,255,0.18);
+                border-radius: 10px;
+                padding: 3px 2px;
+                min-width: 22px;
+            }
+            #mascotBox {
+                background: rgba(255,255,255,0.2);
+                border: 2px solid rgba(255,255,255,0.35);
+                border-radius: 20px;
+            }
+            #mascot {
+                font-size: 13px;
+                font-weight: 700;
+                color: white;
+                background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+                    stop:0 rgba(255,255,255,0.35), stop:1 rgba(255,255,255,0.15));
+                border: 2px solid rgba(255,255,255,0.4);
+                border-radius: 18px;
+                padding: 10px 6px;
+                min-height: 70px;
+            }
+            #mascotBubble {
+                font-size: 12px;
+                font-weight: 600;
+                color: #831843;
+                background: rgba(255,255,255,0.92);
+                border: 2px solid #fbcfe8;
+                border-radius: 12px;
+                padding: 8px 10px;
+            }
             #page-title {
                 font-size: 26px;
                 font-weight: 800;
@@ -2211,7 +2399,7 @@ class MainWindow(QMainWindow):
             #card {
                 background: rgba(255,255,255,0.92);
                 border: 2px solid #fbcfe8;
-                border-radius: 18px;
+                border-radius: 22px;
             }
             #card-title {
                 font-size: 15px;
@@ -2225,14 +2413,14 @@ class MainWindow(QMainWindow):
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
                     stop:0 #fce7f0, stop:0.5 #f3e8ff, stop:1 #e0f2fe);
                 border: 2px solid #FB7299;
-                border-radius: 12px;
+                border-radius: 14px;
                 color: #6b7280;
                 font-weight: 600;
             }
             QPlainTextEdit, QLineEdit, QComboBox {
                 background: #ffffff;
-                border: 1.5px solid #f9a8d4;
-                border-radius: 10px;
+                border: 2px solid #f9a8d4;
+                border-radius: 12px;
                 padding: 8px 12px;
                 selection-background-color: #FB7299;
                 selection-color: white;
@@ -2243,7 +2431,7 @@ class MainWindow(QMainWindow):
             }
             QComboBox::drop-down {
                 border: none;
-                width: 24px;
+                width: 26px;
             }
             QComboBox::down-arrow {
                 image: none;
@@ -2258,8 +2446,8 @@ class MainWindow(QMainWindow):
                     stop:0 #FB7299, stop:1 #e85d8a);
                 color: white;
                 border: none;
-                border-radius: 10px;
-                padding: 9px 20px;
+                border-radius: 12px;
+                padding: 10px 22px;
                 font-weight: 700;
             }
             QPushButton:hover:!disabled {
@@ -2283,8 +2471,8 @@ class MainWindow(QMainWindow):
             }
             QProgressBar {
                 border: 2px solid #fbcfe8;
-                border-radius: 12px;
-                height: 24px;
+                border-radius: 14px;
+                height: 26px;
                 background: #ffffff;
                 text-align: center;
                 color: #831843;
@@ -2292,27 +2480,27 @@ class MainWindow(QMainWindow):
             }
             QProgressBar::chunk {
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:0,
-                    stop:0 #FB7299, stop:0.35 #f472b6, stop:0.7 #a855f7, stop:1 #22d3ee);
-                border-radius: 10px;
+                    stop:0 #FB7299, stop:0.25 #f472b6, stop:0.55 #a855f7, stop:0.8 #22d3ee, stop:1 #4ade80);
+                border-radius: 12px;
             }
             QTableWidget {
                 background: #ffffff;
                 border: 2px solid #fbcfe8;
-                border-radius: 12px;
+                border-radius: 14px;
                 gridline-color: #fce7f3;
                 selection-background-color: #FB7299;
                 selection-color: white;
                 alternate-background-color: #fdf2f8;
             }
             QTableWidget::item {
-                padding: 7px;
+                padding: 8px;
             }
             QHeaderView::section {
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
                     stop:0 #fce7f3, stop:1 #fbcfe8);
                 color: #9d174d;
                 border: none;
-                padding: 9px 7px;
+                padding: 10px 8px;
                 font-weight: 800;
             }
             QCheckBox {
@@ -2320,9 +2508,9 @@ class MainWindow(QMainWindow):
                 font-weight: 500;
             }
             QCheckBox::indicator {
-                width: 20px;
-                height: 20px;
-                border-radius: 6px;
+                width: 22px;
+                height: 22px;
+                border-radius: 8px;
                 border: 2px solid #f9a8d4;
                 background: white;
             }
@@ -2955,27 +3143,56 @@ class MainWindow(QMainWindow):
         self.progress_bar.setValue(int(overall))
 
     def update_window_title(self):
-        """根据当前下载状态更新窗口标题。"""
+        """根据当前下载状态更新窗口标题和标题栏标签。"""
         total = self.table.rowCount()
         if not total:
-            self.setWindowTitle(self.base_window_title)
+            title = self.base_window_title
+            self.setWindowTitle(title)
+            if hasattr(self, "title_label"):
+                self.title_label.setText(title)
+            self._update_mascot_by_state("idle")
             return
         running = self.worker and self.worker.isRunning() and not self.worker.cancelled
         if running:
             done = sum(1 for r in range(total) if self.table.item(r, 1) and self.table.item(r, 1).text() in ("完成", "完成（公开视频兜底）", "失败"))
             if self.worker.paused:
-                self.setWindowTitle(f"{self.base_window_title} - 已暂停 ({done}/{total})")
+                title = f"{self.base_window_title} - 已暂停 ({done}/{total})"
+                self._update_mascot_by_state("paused")
             else:
-                self.setWindowTitle(f"{self.base_window_title} - 下载中 ({done}/{total})")
+                title = f"{self.base_window_title} - 下载中 ({done}/{total})"
+                self._update_mascot_by_state("downloading")
+            self.setWindowTitle(title)
+            if hasattr(self, "title_label"):
+                self.title_label.setText(title)
             return
         failed = sum(1 for r in range(total) if self.table.item(r, 1) and self.table.item(r, 1).text() == "失败")
         cancelled = sum(1 for r in range(total) if self.table.item(r, 1) and self.table.item(r, 1).text() == "已取消")
         if cancelled:
-            self.setWindowTitle(f"{self.base_window_title} - 已取消")
+            title = f"{self.base_window_title} - 已取消"
+            self._update_mascot_by_state("cancelled")
         elif failed:
-            self.setWindowTitle(f"{self.base_window_title} - 完成（有失败）")
+            title = f"{self.base_window_title} - 完成（有失败）"
+            self._update_mascot_by_state("failed")
         else:
-            self.setWindowTitle(f"{self.base_window_title} - 全部完成 ✨")
+            title = f"{self.base_window_title} - 全部完成 ✨"
+            self._update_mascot_by_state("completed")
+        self.setWindowTitle(title)
+        if hasattr(self, "title_label"):
+            self.title_label.setText(title)
+
+    def _update_mascot_by_state(self, state):
+        """根据状态切换看板娘气泡台词。"""
+        if not hasattr(self, "mascot_bubble"):
+            return
+        lines = {
+            "idle": ["嗨！把链接丢给我吧~", "今天想下什么视频呢？", "我准备好啦 ✨"],
+            "downloading": ["正在努力下载中...", "加油加油！", "进度条在动啦~"],
+            "paused": ["暂停一下，喝口水吧~", "休息一下再继续", "我等你哦 💗"],
+            "completed": ["全部完成！太棒了 ✨", "今天也是满载而归~", "可以去欣赏啦 🎉"],
+            "failed": ["有点遗憾，要重试吗？", "失败是成功之母！", "再试一次吧 💪"],
+            "cancelled": ["已取消，随时再来哦~", "下次见啦 ~", "等你回来 🌸"],
+        }
+        self.mascot_bubble.setText(random.choice(lines.get(state, lines["idle"])))
 
     def on_item_history(self, record):
         append_history_record(record)
