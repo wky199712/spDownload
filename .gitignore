@@ -34,6 +34,8 @@ MANIFEST
 #  before PyInstaller builds the exe, so as to inject date/other infos into it.
 *.manifest
 *.spec
+# 保留项目自带的打包配置
+!downloader.spec
 
 # Installer logs
 pip-log.txt
@@ -61,6 +63,8 @@ cover/
 # Django stuff:
 *.log
 local_settings.py
+settings.json
+cookies.txt
 db.sqlite3
 db.sqlite3-journal
 
@@ -175,4 +179,3 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
-libmpv-2.dll
